@@ -1,9 +1,9 @@
 """Interactive resolver: the user explicitly picks or creates owner, account and card."""
 
-import re
 from collections.abc import Callable, Sequence
 
 from bank_transactions.domain.models import CardIdentityHint
+from bank_transactions.domain.text import contains_identifier
 from bank_transactions.identity.interfaces import IdentityResolver
 from bank_transactions.identity.models import (
     AccountChoice,
@@ -21,7 +21,6 @@ from bank_transactions.identity.models import (
     UseOwner,
 )
 
-_SEPARATORS = re.compile(r"[\s\-./]")
 _NEW = "n"
 
 
@@ -29,14 +28,11 @@ class _IdentifierGuard:
     """Rejects typed text that would copy the card or account number from the file into a label."""
 
     def __init__(self, hint: CardIdentityHint) -> None:
-        self._last4 = hint.card.key.last4
-        self._account_number = hint.account.account_number if hint.account else None
+        account_number = hint.account.account_number if hint.account else None
+        self._identifiers = tuple(item for item in (hint.card.key.last4, account_number) if item)
 
     def leaks(self, text: str) -> bool:
-        compact = _SEPARATORS.sub("", text)
-        if self._last4 in text or self._last4 in compact:
-            return True
-        return self._account_number is not None and self._account_number in compact
+        return contains_identifier(text, self._identifiers)
 
 
 class _Console:
