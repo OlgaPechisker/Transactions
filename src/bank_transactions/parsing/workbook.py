@@ -18,7 +18,8 @@ from bank_transactions.ports.workbook_reader import WorkbookReader
 
 _PLAIN_CELL_TYPES = (str, int, float, Decimal, bool, datetime, date)
 # What openpyxl raises for damaged input: a bad or truncated archive, a missing package part
-# (KeyError), malformed XML, unparsable cell content (ValueError) or a rejected file type.
+# (KeyError), malformed XML, unparsable cell content (ValueError), a mistyped style attribute
+# (TypeError), a package without a workbook part (OSError) or a rejected file type.
 # Anything else is a defect or a resource failure and must propagate.
 _BAD_INPUT_ERRORS = (
     zipfile.BadZipFile,
@@ -27,6 +28,8 @@ _BAD_INPUT_ERRORS = (
     InvalidFileException,
     KeyError,
     ValueError,
+    TypeError,
+    OSError,
 )
 
 

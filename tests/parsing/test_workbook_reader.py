@@ -1,4 +1,5 @@
 import io
+import re
 import warnings
 import zipfile
 from datetime import datetime
@@ -90,6 +91,58 @@ def test_corrupt_archives_and_corrupt_xml_parts_raise_a_sanitised_parse_error():
         ExcelWorkbookReader().read_stream(io.BytesIO(good[: len(good) // 2]))
 
     assert "1234" not in str(xml_error.value) + str(zip_error.value)
+
+
+EMPTY_CONTENT_TYPES = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'
+)
+
+
+def _workbook_with_part(part_name, transform):
+    def build(book):
+        book.active.append(["secret-1234"])
+
+    good = workbook_stream(build).getvalue()
+    damaged = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(good)) as source, zipfile.ZipFile(damaged, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            target.writestr(item, transform(data) if item.filename == part_name else data)
+    return damaged.getvalue()
+
+
+DAMAGED_WORKBOOKS = {
+    "non-numeric font size": _workbook_with_part(
+        "xl/styles.xml", lambda data: re.sub(rb'<sz val="11"\s*/>', b'<sz val="abc"/>', data)
+    ),
+    "content types without any part": _workbook_with_part(
+        "[Content_Types].xml", lambda data: EMPTY_CONTENT_TYPES
+    ),
+}
+
+
+@pytest.mark.parametrize("damaged", DAMAGED_WORKBOOKS.values(), ids=DAMAGED_WORKBOOKS.keys())
+def test_workbooks_with_unreadable_parts_raise_a_sanitised_parse_error_from_a_stream(damaged):
+    with pytest.raises(ParseError) as raised:
+        ExcelWorkbookReader().read_stream(io.BytesIO(damaged))
+
+    assert "1234" not in str(raised.value)
+    assert "abc" not in str(raised.value)
+
+
+@pytest.mark.parametrize("damaged", DAMAGED_WORKBOOKS.values(), ids=DAMAGED_WORKBOOKS.keys())
+def test_workbooks_with_unreadable_parts_raise_a_sanitised_parse_error_from_a_path(
+    tmp_path, damaged
+):
+    path = tmp_path / "secret-1234.xlsx"
+    path.write_bytes(damaged)
+
+    with pytest.raises(ParseError) as raised:
+        ExcelWorkbookReader().open(path)
+
+    assert "1234" not in str(raised.value)
+    assert "abc" not in str(raised.value)
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("bug"), MemoryError()])
