@@ -52,12 +52,33 @@ Other contract clarifications, derived from the stated invariants:
   automatic PARTIAL status. Error-level row issues cause PARTIAL.
 - A dry run writes audit data but commits no identity, plan, or transaction
   changes; its report describes the proposed import. Unresolved identities
-  still yield NEEDS_INPUT. `detect` does not require a database or cipher key.
+  still yield NEEDS_INPUT. Identity and domain changes share one live UoW in
+  a dry run: flush allocates real IDs for comparison/insertion, then rollback
+  discards all changes. Normal imports may use the same identity/domain UoW,
+  committing only after parsing/insertion succeeds. Audit uses separate,
+  committed UoWs. `detect` does not require a database or cipher key.
 - Audit source names/paths must not leak identifiers already present in
   filenames: persist hash-based safe source labels rather than raw paths.
   Error summaries, reports, and issue locations/messages must also be safe.
 - Since no audit heartbeat exists in the prescribed schema, the stale RUNNING
   sweep uses `started_at` and the stated one-hour threshold. No silent failures.
+- Identifier protection explicitly takes `IdentifierType` on encrypt/decrypt;
+  the AES-SIV key is decoded from base64 environment configuration into bytes.
+  Ciphertext is bound to `card-last4` or `account-number` associated data.
+- Repeated reference keys within a file are counted as duplicates after the
+  first new key; they must not trigger a unique-constraint failure. This does
+  not collapse distinct installment numbers. Reference-less repeated rows
+  retain the count-based semantics in the source plan.
+- Reference uniqueness must treat NULL installment numbers as equal, using
+  PostgreSQL 15+ NULLS NOT DISTINCT or equivalent partial unique indexes.
+  Audit issuer_code is nullable until parser selection/terminal update.
+- Keep the prescribed unconditional installment-plan natural unique key.
+  Upsert must handle both issuer-reference and natural conflicts, select the
+  uniquely matching existing plan, and explicitly reject inconsistent matches;
+  do not silently weaken the schema by making natural uniqueness partial.
+- Cards must belong to their account's owner; enforce that invariant in
+  service validation and database constraints. Account lookups are NULL-safe.
+  Matching-text folding is shared pure domain logic, not duplicated by layers.
 
 ## Agent capabilities and ownership
 
@@ -122,7 +143,8 @@ Public contract invariants to be concretized in APP-FOUNDATION:
 - UoW and repository contracts expose audit start/finish/sweep, identity
   lookup/create, plan upsert, known reference lookup, NULL-safe comparison
   group counts, and aggregate insertion. The UoW factory makes independent
-  transactions for durable audit, atomic identity, and domain persistence.
+  transactions for durable audit and an atomic identity/domain transaction;
+  a dry-run identity/domain transaction is always rolled back.
 - `NewTransactionAggregate` carries one transaction, a reason set and at most
   one FX detail. Mapping is pure; repositories never mutate parsed objects.
 - Reference keys obey the user-approved installment extension. Reference-less
@@ -150,6 +172,12 @@ Initial prerequisite probes found pytest, ruff, mypy and SQLAlchemy missing;
 installing the declared project dependencies after scaffold creation is needed.
 Database validation uses an isolated local test container/database, not any
 existing customer database. Secrets are runtime-only, never in tracked files.
+The session container is `transactions-194a7f6b-postgres` (PostgreSQL 16),
+bound only to localhost on dynamically assigned port 57085. `pg_isready`
+confirmed readiness. Credentials were generated at runtime and remain in
+container configuration; obtain them locally without printing or committing
+them. The database name is `bank_transactions_test`; test owners must use
+separate schemas or serialize destructive schema setup.
 
 | Boundary | Required observable scenarios |
 | --- | --- |
@@ -192,7 +220,7 @@ Review is independent and applies to fixes and integration work too.
 | Task / iteration | Commit | Verification | Review / state |
 | --- | --- | --- | --- |
 | BASELINE / 0 | `ced9245` | 17 authorized files; staged diff inspected; `git diff --cached --check` passed; credential-pattern scan of text and workbook cells found no credentials | Initial inputs preserved unchanged; clean tree before branch creation |
-| PLAN / 0 | See next commit / final ledger | Documentation only | Ownership/contracts recorded before implementation |
+| PLAN / 0 | `13de890` | Documentation only | Ownership/contracts recorded before implementation |
 
 ### Findings ledger
 
