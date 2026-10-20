@@ -48,7 +48,8 @@ bank-transactions import statement.xlsx --non-interactive
 `python -m bank_transactions ...` is equivalent.
 
 An import reports the rows read, imported, duplicated, skipped and needing review, then any
-warnings and row issues. Identifiers are never printed.
+warnings and row issues. The report never contains card or account numbers; only an interactive
+identity prompt shows a card's masked last 4 (see [Privacy](#privacy)).
 
 ### Exit codes
 
@@ -70,9 +71,10 @@ claims rows that were not committed.
 
 ### Re-importing
 
-Importing the same file twice inserts nothing the second time. Rows are matched by issuer, card,
-reference number and installment number; rows without a reference are matched by how many identical
-rows are already stored. A yearly Max export that contains an already-imported monthly export adds
+Importing the same file twice inserts nothing the second time. A row with an issuer reference is
+matched by card, transaction date, issuer reference and installment number (`IssuerReferenceKey`;
+a row that is not an installment has no installment number, and that counts as one value); rows
+without a reference are matched by how many identical rows are already stored. A yearly Max export that contains an already-imported monthly export adds
 only the rows that are new. Stored rows are never updated or deleted.
 
 ## Privacy
@@ -80,13 +82,20 @@ only the rows that are new. Stored rows are never updated or deleted.
 * Card last-4 and account numbers are stored only as deterministic AES-SIV ciphertext, bound to the
   identifier type; equal values encrypt equally so they can be looked up.
 * Owner, account and card labels may not contain a known identifier.
-* Reports, audit records, failure summaries and CLI output carry no plaintext identifiers, DSN, key
+* Import reports, audit records, logs and failure summaries carry no plaintext identifiers, DSN, key
   or file path. Audit rows identify a file by its SHA-256 hash.
+* The one deliberate exception is the interactive identity prompt: so that you can make an explicit
+  choice it shows the issuer and the masked last 4 (`••••4396`) of the card in question and of the
+  existing cards offered. Full card and account numbers are never shown, and `--non-interactive`
+  prints no prompt.
 * Merchant text and notes are stored exactly as read.
 
 ## Using the library
 
 ```python
+import os
+from pathlib import Path
+
 from bank_transactions.bootstrap import build_import_service
 from bank_transactions.config import Settings
 
