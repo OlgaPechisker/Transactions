@@ -107,6 +107,17 @@ Other contract clarifications, derived from the stated invariants:
   `comparison_key(tx, card_id)`, `plan_command(plan, card_id)` and
   `to_aggregate(tx, card_id, run_id, plan_id=None)`; no SQLAlchemy imports.
   Invalid cipher keys/tokens/type binding raise neutral ValueError.
+- Account number lookup now returns all candidates as an ordered tuple.
+  NULL-safe comparison is not permission to invent uniqueness for an unknown
+  bank: preserve the source `(bank_code, account_number_enc)` unique rule.
+  The service determines an account only from exactly one consistent candidate;
+  zero/multiple/conflicting candidates go through explicit identity resolution.
+- Necessary packaging deviation: canonical Alembic resources live under
+  `bank_transactions.persistence.migrations` so installed wheels can run
+  migrations. The root `alembic.ini` points to those same developer resources.
+  There is one migration implementation, not duplicated source/package copies.
+  SQLAlchemy minimum is 2.0.16, where `postgresql_nulls_not_distinct` was added
+  (upstream tagged changelog, section 2.0.16, ticket 8240).
 
 ## Agent capabilities and ownership
 
@@ -236,6 +247,8 @@ The following modules are the authoritative typed contract definitions:
   transaction `find_known_references -> frozenset[key]`,
   `count_matching_groups -> Mapping[key, count]`, and
   `insert_many -> tuple[TransactionId, ...]`. Creates flush real IDs.
+  Account `find_by_number` returns `tuple[AccountRecord, ...]` (ordered,
+  zero/one/many), not a first-match optional result.
 - `UnitOfWorkFactory.create() -> UnitOfWork`; UoW exposes six repositories,
   commit/rollback and context exit rollback. Each factory call is a new session.
 - `domain.keys` defines exact reference/comparison dataclass keys and
@@ -309,8 +322,9 @@ Review is independent and applies to fixes and integration work too.
 | PLAN / 1 | `c3e7904` | Documentation diff inspected; staged whitespace check passed | Associated-data, dry-run, reference/NULL and owner-account invariants explicitly settled with independent reviewer |
 | APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
 | APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
-| PARSE / 1 | Pending leader commit | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Actual four examples reconcile; initial implementation awaiting independent review |
+| PARSE / 1 | `f58ac75` | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Opus BLOCK P1/P2; LEAD validated both; real examples independently reconcile |
 | STORE / 1 | `71ee0cf` | Owner RED missing CLI resolver then database modules; owner GREEN 261 storage/contract tests; LEAD GREEN 365 foundation/storage/contract tests on real PostgreSQL; scoped ruff and strict mypy nine source files passed | Delivery frozen for independent review; source migration packaging gap and added NULL-bank unique index explicitly reported |
+| APP-SHARED / 1 | Pending leader commit | Owner and LEAD: 83 contract tests pass, one wheel-resource test FAILS; full strict mypy FAILS on pending STORE optional-return adapter | Unsuccessful standalone verification explicitly preserved; coordinated STORE adapter/resource correction is next, no success claimed |
 
 ### Findings ledger
 
@@ -328,8 +342,12 @@ Review is independent and applies to fixes and integration work too.
 | F2 | APP-FOUNDATION / MEDIUM | Reviewer found inconsistent precision boundary; LEAD reproduced excess precision retained in foreign-detail command | APP | 1 | Resolved; Opus verified command quantization and parsed precision in `9967f8d` |
 | N1 | APP-FOUNDATION / test validity | Reviewer found domain isolation test imports only empty initializer; LEAD inspected actual test and agreed | APP | 1 | Resolved; Opus verified every concrete domain module is exercised |
 | N2 | APP-FOUNDATION / correctness | Reviewer found stale FX rate accepted; LEAD reproduced billed 12 / original 3 with incorrect rate 3 | APP | 1 | Resolved; Opus verified signed consistency and shared helper regressions |
-| STORE-PARENT-01 | STORE / schema scope | Owner added a NULL-bank account-number unique index despite prior ruling to keep source account uniqueness; LEAD confirmed actual ORM/migration and singular lookup uses first() | STORE | 0 | Independent review requested before accepting or correcting |
-| PACKAGE-01 | Cross-scope / installation | STORE reports root Alembic scripts omitted from wheel; installed init-db cannot locate migrations | STORE + APP | 0 | Must resolve with coordinated DB helper and APP-owned packaging before final validation |
+| STORE-PARENT-01 | STORE / schema scope | Owner added a NULL-bank account-number unique index despite prior ruling; reviewer recommended accepting it, LEAD rejected that recommendation because unknown-bank identity is ambiguous and source DDL is explicit | STORE + APP | 0 | Remove index, expose all account candidates, then prompt on ambiguity; coordinated correction pending |
+| PACKAGE-01 / S1 | Cross-scope / HIGH | Root Alembic scripts omitted from wheel; installed init-db cannot locate migrations; LEAD reproduced missing resources in built wheel | STORE + APP | 1 | First APP packaging substage still fails until canonical files move; next correction must include installed-wheel PostgreSQL verification |
+| P1 | PARSE / MEDIUM | Reviewer and LEAD reproduced unusable installment note retaining plan total as original current-charge amount; existing test asserted wrong value | PARSE | 0 | Accepted; actual failing regression required before correction |
+| P2 | PARSE / MEDIUM | Reviewer probed unknown/blank types silently becoming REGULAR; LEAD inspected both Max/Cal mappings and existing incorrect expectation | PARSE | 0 | Accepted; error issues for unknown/blank charged-row type, optional absent Cal column exception |
+| P3 | PARSE / LOW | Foreign-currency installment lacks per-charge original; skip with explicit FX-original error, do not guess by dividing plan total | PARSE | 0 | Accept visible rejection; add parser-level test |
+| P4 | PARSE / maintainability | Reviewer accepted broad Exception around workbook load; LEAD rejected that recommendation: unexpected programming/resource errors must not be mislabeled as corrupt workbooks | PARSE | 0 | Narrow expected archive/XML/input exceptions; propagate unexpected errors, retain safe ParseError for corrupt input |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard

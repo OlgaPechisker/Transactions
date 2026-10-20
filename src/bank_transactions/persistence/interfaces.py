@@ -78,8 +78,10 @@ class AccountRepository(ABC):
     @abstractmethod
     def find_by_number(
         self, bank_code: str | None, account_number_enc: IdentifierToken
-    ) -> AccountRecord | None:
-        """Match on the (bank_code, account_number_enc) ciphertext pair."""
+    ) -> tuple[AccountRecord, ...]:
+        """Every account on the (bank_code, account_number_enc) ciphertext pair, ordered by id.
+        Zero, one or several accounts may match (an unknown bank may reuse the same digits), so
+        callers never take the first; they act only on exactly one consistent match."""
 
     @abstractmethod
     def create(self, account: NewAccount) -> AccountRecord: ...

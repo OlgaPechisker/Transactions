@@ -9,7 +9,7 @@ description = "Parse Israeli credit-card statement workbooks and persist normali
 requires-python = ">=3.12"
 dependencies = [
     "openpyxl>=3.1",
-    "SQLAlchemy>=2.0",
+    "SQLAlchemy>=2.0.16",
     "alembic>=1.13",
     "cryptography>=42",
     "psycopg[binary]>=3.1",
@@ -27,6 +27,12 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 bank_transactions = ["py.typed"]
+"bank_transactions.persistence" = [
+    "migrations/*.py",
+    "migrations/*.mako",
+    "migrations/*.ini",
+    "migrations/versions/*.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
