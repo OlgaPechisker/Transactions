@@ -1,5 +1,99 @@
 # Implementation coordination and evidence
 
+## APP delivery checkpoint and user-requested resumption - 2026-10-20
+
+The user requested finishing the currently running APP agent task, then stopping
+and recording the resume point. That task finished and its delivery was
+preserved. The user then requested **"continue implementation process"** before
+this checkpoint documentation was committed. Work has RESUMED at independent
+APP review and LEAD verification. The application is not independently approved
+and the overall task is incomplete.
+
+- Base branch: `master`, authorized baseline `ced9245`; it remains unchanged.
+- Implementation branch: `implementation/bank-transactions`.
+- Frozen APP iteration 1 delivery: **`d66a31d`**, parent `930ff65`.
+- This documentation-only commit records the delivery checkpoint and resumption.
+  All delivered files are committed; the final working-tree/staging check is
+  performed after committing this ledger. Nothing was pushed or merged.
+- Original persistent agents are retained; reuse the IDs in the ownership table.
+  No independent APP review was launched during the pause. The original Opus
+  reviewer was reactivated only after the user requested continuation.
+
+### Resumption execution order
+
+1. Ask the original independent Opus reviewer to review `d66a31d` against
+   `930ff65`, the source documents and the approved contracts. Do not redo the
+   already-approved PARSE/STORE scopes unless an actual integration finding
+   affects them.
+2. Validate findings and route valid corrections to the original APP owner,
+   preserving a separate commit and verification record for every attempt.
+3. Run LEAD's independent application verification and the remaining
+   **installed-wheel CLI acceptance outside the checkout**. The existing
+   installed-wheel migration round-trips are already covered; they do not
+   establish installed CLI acceptance.
+4. Finish any required re-review, integration corrections and final reporting.
+   Preserve the existing per-issue counters and the three-unsuccessful-attempt
+   stop rule.
+
+**Pre-commit review target APP-PC-01 (not yet independently reviewed or fixed):**
+`services/identity_gate.py`, `_Applier._create_card`, has
+`if existing: return existing[0].card_id`. This appears capable of implicitly
+reusing a first matching card after a `CreateCard` selection, including when
+several physical cards share issuer/last-4/account. Check this against the
+non-unique card identity and explicit-selection contract before approving APP.
+No reproduction or correction iteration was started at the pause; attempt count
+is zero. The reviewer is now validating it. The owner's empty candidate list for
+`CONFLICTING_HINTS` is another reported assumption for the reviewer to check,
+not a newly approved contract.
+
+### APP owner's reported verification, not LEAD re-verification
+
+The owner reports **933 tests passed in 112.56 seconds**, including 156
+application tests and 39 real PostgreSQL integration tests; ruff passes,
+129 files pass formatting, and strict mypy passes on 71 source files.
+LEAD did not rerun those application checks during the pause. LEAD only
+performed the required pre-commit scope/safety inspection, staged whitespace
+check, input-preservation check, commits and session-helper cleanup. After the
+user resumed, LEAD launched an independent full-suite/lint/format/type run;
+its result is pending at this checkpoint.
+
+| Original example | Owner-reported PostgreSQL result |
+| --- | --- |
+| Isracard | 4 rows; ILS 1337.60 and USD 26.39 |
+| Max monthly | 158 rows, 2 cards, 16 FX rows, 7 plans |
+| Max yearly | 2169 rows, 607 FX rows, 374 unknown-currency reasons, 14 refunds, 13 plans / 44 linked rows |
+| Cal | 8 imported, 13 pending skips, ILS 645.13; plan 1680 / charge 336 / installment 4 of 5 |
+
+The owner also reports passing both Max overlap orders (monthly first adds 2011
+new yearly rows and counts 158 duplicates; yearly first makes the monthly file
+all duplicates), repeat imports, identical-row multiplicity, dry runs,
+NEEDS_INPUT/ambiguous identities, rollback, stale-run sweep, failures, privacy and
+in-checkout CLI scenarios. These results await independent APP review and
+LEAD validation. Original workbooks and source plan/diagram remain unchanged.
+
+The new library surface is `StatementImportService(...).import_file(path,
+dry_run=False)`, `Settings.from_env(...)`, the bootstrap builders, and the CLI
+`import` / `detect` / `init-db` commands. CLI exit codes are 0 success,
+1 failure, 2 usage/configuration, 3 needs input, 4 partial and 130 interrupted.
+These are implemented choices awaiting APP review, not final acceptance.
+
+### Retained test environment
+
+The session-owned container `transactions-194a7f6b-postgres` was **stopped, not
+removed** at the pause; its configuration and data were retained. It has now been
+restarted and `pg_isready` confirmed readiness on `127.0.0.1:57085`. Docker Desktop
+and unrelated containers were not stopped. If needed after a later pause:
+
+```powershell
+docker start transactions-194a7f6b-postgres
+```
+
+Use the existing `.venv\Scripts\python.exe`, `127.0.0.1:57085`, and obtain the
+test DSN/password from runtime container configuration without printing or
+committing secrets. Do not use `localhost` (a prior IPv6 connection hung).
+Unattributed old test schemas remain preserved. No session-owned bounded helper
+process is left running by the APP owner.
+
 ## Source of truth and authorized decisions
 
 The requirements are `.github/plan.md` and `.github/sequence-diagram.md`.
@@ -337,6 +431,9 @@ Review is independent and applies to fixes and integration work too.
 | BASELINE / 0 | `ced9245` | 17 authorized files; staged diff inspected; `git diff --cached --check` passed; credential-pattern scan of text and workbook cells found no credentials | Initial inputs preserved unchanged; clean tree before branch creation |
 | PLAN / 0 | `13de890` | Documentation only | Ownership/contracts recorded before implementation |
 | PLAN / 1 | `c3e7904` | Documentation diff inspected; staged whitespace check passed | Associated-data, dry-run, reference/NULL and owner-account invariants explicitly settled with independent reviewer |
+| PLAN / 2 | `087186e` | Documentation-only correction hashes, 715-test evidence and finding counters | Preserved coordination checkpoint |
+| PLAN / 3 | `098bfc8` | Documentation-only adapter approvals, shared validation ownership and test-first evidence limits | APP integration gate recorded open |
+| PLAN / 4 | `930ff65` | Documentation-only final STORE3 approval | All adapter/shared-helper corrections independently approved before APP delivery |
 | APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
 | APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
 | PARSE / 1 | `f58ac75` | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Opus BLOCK P1/P2; LEAD validated both; real examples independently reconcile |
@@ -349,6 +446,7 @@ Review is independent and applies to fixes and integration work too.
 | PARSE / 4 | `bef4e77` | P4 attempt 2: owner genuine RED three failures / 11 passes, GREEN 14 workbook tests and 448 parsing/domain tests; REVIEW independently reproduced both RED and GREEN on the commit snapshot; LEAD scoped lint/format/type checks pass | Opus PASS; original P4 closed without resetting the counter |
 | APP-SHARED / 3 | `f63f9df` | Owner and LEAD 52 text/import-graph tests pass; REVIEW 115 domain tests and scoped lint/format/type/purity checks pass | Opus PASS; original test-first RED not captured, reconstructed RED explicitly excluded from evidence |
 | STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 focused checks pass; REVIEW 76 selected privacy/resolver tests and full strict mypy 60 source files pass | Opus PASS; CLI and service share pure label validation without behavior or public-contract changes |
+| APP / 1 | `d66a31d` | Owner reports 933 tests including actual PostgreSQL/example/CLI scenarios, lint/format 129 files and strict mypy 71 source files pass; LEAD scope/safety checks at pause, independent full checks now running after resumption | Frozen and committed; original Opus review and APP-PC-01 validation in progress |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
@@ -385,6 +483,7 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 | A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 1 | Resolved; fresh builds and stale-module regression independently approved in `b0d059b` |
 | A2 | APP-SHARED / LOW | Fake account none/one/many test only returns its configured value | APP + STORE | 1 | Fake removed in `b0d059b`; actual PostgreSQL zero/one/many, ordering and known-bank isolation pass |
 | A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 1 | Unused glob removed in `b0d059b`; single canonical migration implementation preserved |
+| APP-PC-01 | APP / review target | Pre-commit inspection saw `_Applier._create_card` return `existing[0]` without cardinality or explicit card selection; inspect the CreateCard path against ambiguity/physical-card invariants | APP | 0 | Initially deferred by pause; now under original Opus review, no correction attempted |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
@@ -406,16 +505,27 @@ commit and this ledger explicitly preserve that limitation. Functional tests and
 import isolation pass; all remaining new APP components were instructed to run
 their actual failing tests before implementation, without manufactured RED.
 
+APP iteration 1's owner reports genuine missing-module RED runs for totals,
+deduplication, settings, the main import flow, CLI and bootstrap. The identity
+gate and failure handling were nevertheless written before their tests; two
+reverted mutation checks establish sensitivity, not original test-first history.
+Import-graph and integration tests were added against implemented code. Initial
+test failures caused by incorrect Money fixture types and a wrong expected
+currency sum were corrected in tests, not production logic. These provenance
+limits are disclosed rather than represented as full TDD compliance.
+
 The parser's full-suite attempt without BT_TEST_DSN errored on 124 PostgreSQL
 test setups as designed; it is not a storage regression. LEAD reran the whole
 delivered suite with the runtime DSN: 669 passed. Parser golden tests use all
 four unchanged examples and reconcile their stated counts and totals.
 The adapter reviews and corrections are independently approved: PARSE P1-P5,
 STORE packaging/account lookup and APP's stale-wheel correction are closed.
-The APP adapter integration gate is OPEN. The original APP owner continues
-service/config/bootstrap/CLI implementation and may run real PostgreSQL vertical
-tests when ready. The shared label helper and its green-preserving CLI adoption
-are both independently approved. Full application/end-to-end validation has not
-run.
+The APP adapter integration gate is OPEN. APP iteration 1 has now been delivered
+and preserved at `d66a31d`; its owner reports passing application/PostgreSQL/
+example/in-checkout CLI tests. The shared label helper and its green-preserving
+CLI adoption are independently approved. The user requested a pause after APP
+delivery, then resumed before its documentation checkpoint was committed.
+Independent APP review and LEAD full verification are now running.
+Installed-wheel CLI acceptance and final completion reporting remain pending.
 Two old test schemas reported by STORE are preserved because their active-run
 attribution was uncertain; no unattributed schema was dropped.
