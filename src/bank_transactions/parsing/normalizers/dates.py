@@ -8,8 +8,8 @@ from bank_transactions.domain.text import fold_text
 from bank_transactions.domain.workbook import CellValue
 from bank_transactions.parsing.normalizers.text import strip_bidi_marks
 
-_YEARS_BACK = 80
-_YEARS_AHEAD = 19
+DEFAULT_TWO_DIGIT_YEARS_BACK = 80
+_YEARS_PER_CENTURY = 100
 _DAY_FIRST = re.compile(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})")
 _YEAR_FIRST = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 _MONTH_SLASH_YEAR = re.compile(r"(\d{1,2})/(\d{4})")
@@ -40,15 +40,32 @@ class InvalidDateError(ValueError):
     """A non-blank cell that is not a real calendar date."""
 
 
-def resolve_two_digit_year(two_digit: int, anchor_year: int) -> int:
-    """The year ending in `two_digit` inside [anchor-80, anchor+19]."""
-    earliest = anchor_year - _YEARS_BACK
-    year = earliest - earliest % 100 + two_digit
-    return year if year >= earliest else year + 100
+def check_two_digit_years_back(years_back: int) -> int:
+    """`years_back` is how many years before the anchor a two-digit year may fall (0..99); the
+    window is the hundred years [anchor - years_back, anchor + 99 - years_back]."""
+    if not 0 <= years_back < _YEARS_PER_CENTURY:
+        raise ValueError("two_digit_years_back must be between 0 and 99")
+    return years_back
 
 
-def parse_date(value: CellValue, anchor: date) -> date | None:
-    """A cell as a date. `anchor` (statement date or today) resolves two-digit years."""
+def resolve_two_digit_year(
+    two_digit: int, anchor_year: int, years_back: int = DEFAULT_TWO_DIGIT_YEARS_BACK
+) -> int:
+    """The year ending in `two_digit` inside [anchor - years_back, anchor + 99 - years_back]."""
+    earliest = anchor_year - check_two_digit_years_back(years_back)
+    year = earliest - earliest % _YEARS_PER_CENTURY + two_digit
+    return year if year >= earliest else year + _YEARS_PER_CENTURY
+
+
+def parse_date(
+    value: CellValue,
+    anchor: date,
+    *,
+    two_digit_years_back: int = DEFAULT_TWO_DIGIT_YEARS_BACK,
+) -> date | None:
+    """A cell as a date. `anchor` (statement date or today) and `two_digit_years_back` resolve
+    two-digit years."""
+    check_two_digit_years_back(two_digit_years_back)
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -60,7 +77,7 @@ def parse_date(value: CellValue, anchor: date) -> date | None:
     text = strip_bidi_marks(value).strip()
     if not text:
         return None
-    return _from_text(text, anchor.year)
+    return _from_text(text, anchor.year, two_digit_years_back)
 
 
 def parse_month_year(value: CellValue) -> tuple[int, int] | None:
@@ -83,7 +100,7 @@ def month_bounds(year: int, month: int) -> tuple[date, date]:
     return date(year, month, 1), date(year, month, last_day)
 
 
-def _from_text(text: str, anchor_year: int) -> date:
+def _from_text(text: str, anchor_year: int, years_back: int) -> date:
     year_first = _YEAR_FIRST.fullmatch(text)
     if year_first is not None:
         year, month, day = (int(part) for part in year_first.groups())
@@ -93,7 +110,7 @@ def _from_text(text: str, anchor_year: int) -> date:
         raise InvalidDateError("date text has an unknown layout")
     day_text, month_text, year_text = day_first.groups()
     year = (
-        resolve_two_digit_year(int(year_text), anchor_year)
+        resolve_two_digit_year(int(year_text), anchor_year, years_back)
         if len(year_text) == 2
         else int(year_text)
     )

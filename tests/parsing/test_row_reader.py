@@ -122,3 +122,12 @@ def test_pending_is_an_informational_rejection():
 )
 def test_identifiers_lose_excel_float_noise_but_keep_leading_zeros(cell, expected):
     assert reader(None, None, None, None, None, cell).identifier("note") == expected
+
+
+def test_the_row_reader_resolves_two_digit_years_with_its_own_look_back():
+    cells = ("01.01.50",)
+
+    assert RowReader(LAYOUT, cells, ANCHOR).date("date") == date(1950, 1, 1)
+    assert RowReader(LAYOUT, cells, ANCHOR, two_digit_years_back=20).date("date") == date(
+        2050, 1, 1
+    )

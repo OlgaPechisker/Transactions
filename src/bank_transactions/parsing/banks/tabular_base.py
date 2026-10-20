@@ -21,6 +21,10 @@ from bank_transactions.domain.models import (
 from bank_transactions.domain.workbook import Row, SheetView, WorkbookView
 from bank_transactions.parsing.column_map import ColumnLayout
 from bank_transactions.parsing.interfaces import StatementParser
+from bank_transactions.parsing.normalizers.dates import (
+    DEFAULT_TWO_DIGIT_YEARS_BACK,
+    check_two_digit_years_back,
+)
 from bank_transactions.parsing.normalizers.text import cell_text
 from bank_transactions.parsing.row_reader import RowReader, RowRejected
 from bank_transactions.parsing.shared.draft import FeeMarker, TransactionDraft
@@ -68,7 +72,9 @@ class _Collected:
 class TabularStatementParser(StatementParser, ABC):
     """`fee_keywords` and `fee_window_days` configure foreign-commission folding (defaults are
     documented in `shared.fee_folder`); `today` supplies the anchor for two-digit years when a
-    statement states no date of its own."""
+    statement states no date of its own; `two_digit_years_back` (0..99, default 80) is how far
+    before that anchor a two-digit year may fall, so the window is
+    [anchor - back, anchor + 99 - back]."""
 
     def __init__(
         self,
@@ -76,10 +82,12 @@ class TabularStatementParser(StatementParser, ABC):
         fee_keywords: Iterable[str] = DEFAULT_FEE_KEYWORDS,
         fee_window_days: int = DEFAULT_FEE_WINDOW_DAYS,
         today: Callable[[], date] = date.today,
+        two_digit_years_back: int = DEFAULT_TWO_DIGIT_YEARS_BACK,
     ) -> None:
         self._fee_matcher = ForeignFeeMatcher(fee_keywords)
         self._fee_folder = ForeignFeeFolder(fee_window_days)
         self._today = today
+        self._years_back = check_two_digit_years_back(two_digit_years_back)
         self._plan_builder = InstallmentPlanBuilder()
         self._fx = EffectiveRateCalculator()
 
@@ -130,7 +138,8 @@ class TabularStatementParser(StatementParser, ABC):
                 return
             collected.rows_seen += 1
             location = SourceLocation(plan.position, number)
-            row = SourceRow(location, RowReader(plan.layout, cells, anchor), plan.foreign)
+            reader = RowReader(plan.layout, cells, anchor, self._years_back)
+            row = SourceRow(location, reader, plan.foreign)
             self._collect_row(row, ctx, collected)
 
     def _collect_row(self, row: SourceRow, ctx: StatementContext, collected: _Collected) -> None:

@@ -13,7 +13,11 @@ from bank_transactions.parsing.normalizers.amounts import (
     parse_rate,
 )
 from bank_transactions.parsing.normalizers.currency import parse_currency
-from bank_transactions.parsing.normalizers.dates import InvalidDateError, parse_date
+from bank_transactions.parsing.normalizers.dates import (
+    DEFAULT_TWO_DIGIT_YEARS_BACK,
+    InvalidDateError,
+    parse_date,
+)
 from bank_transactions.parsing.normalizers.text import cell_text
 
 
@@ -39,12 +43,20 @@ class PendingRow(RowRejected):
 
 
 class RowReader:
-    """Reads logical columns of one row. `date_anchor` resolves two-digit years."""
+    """Reads logical columns of one row. `date_anchor` and `two_digit_years_back` resolve
+    two-digit years (see `normalizers.dates.parse_date`)."""
 
-    def __init__(self, layout: ColumnLayout, cells: Row, date_anchor: Day) -> None:
+    def __init__(
+        self,
+        layout: ColumnLayout,
+        cells: Row,
+        date_anchor: Day,
+        two_digit_years_back: int = DEFAULT_TWO_DIGIT_YEARS_BACK,
+    ) -> None:
         self._layout = layout
         self._cells = cells
         self._anchor = date_anchor
+        self._years_back = two_digit_years_back
 
     def has_column(self, key: str) -> bool:
         return self._layout.has(key)
@@ -89,7 +101,7 @@ class RowReader:
 
     def date(self, key: str) -> Day | None:
         try:
-            return parse_date(self.raw(key), self._anchor)
+            return parse_date(self.raw(key), self._anchor, two_digit_years_back=self._years_back)
         except InvalidDateError as error:
             raise RowRejected(
                 RowIssueCode.INVALID_DATE, f"column '{key}' is not a valid date"
