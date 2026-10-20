@@ -79,6 +79,25 @@ Other contract clarifications, derived from the stated invariants:
 - Cards must belong to their account's owner; enforce that invariant in
   service validation and database constraints. Account lookups are NULL-safe.
   Matching-text folding is shared pure domain logic, not duplicated by layers.
+- Canonical last-4 preserves leading zeros and must contain four digits.
+  Canonical account identifiers remove whitespace/hyphens for equality.
+  Cal's bank maps to LEUMI. Account/card hints stay memory-only.
+- Foreign classification includes Max foreign-sheet rows even when currencies
+  are equal; differing known currencies and explicit foreign evidence also
+  qualify. Do not infer a commission from a printed rate without a fee row.
+  Preserve refund original amounts exactly as supplied: signed effective
+  rates remain billing/original, not an absolute-value substitution.
+- Future charge dates alone do not imply pending: explicit Max billed rows
+  appear in declared totals. Missing billed amounts/dates are pending.
+  Monthly/deferred-monthly types map to RECURRING; immediate to
+  IMMEDIATE_CHARGE; REGULAR is not changed merely because notes look recurring.
+  Unrecognized/blank channels use UNKNOWN. Fee date window defaults to three
+  days and is configurable, along with issuer fee keywords.
+- Original notes are preserved; nonempty discount-club metadata may be
+  appended with labels. Do not remove source personal names speculatively;
+  last-4/account identifiers and diagnostic output have the explicit
+  confidentiality boundary. Keep raw merchant text while extracting only
+  confidently recognized location suffixes.
 
 ## Agent capabilities and ownership
 
@@ -157,8 +176,62 @@ Public contract invariants to be concretized in APP-FOUNDATION:
 
 ### Frozen field/signature record
 
-Pending APP-FOUNDATION delivery and review. No dependent implementation begins
-until LEAD records the actual contract commit here and informs both owners.
+APP-FOUNDATION iteration 1 is delivered; independent review is pending.
+No dependent implementation begins until that review passes.
+The following modules are the authoritative typed contract definitions:
+
+- `domain.ids`: NewType owner/account/card/import-run/installment-plan/
+  transaction IDs and IdentifierToken.
+- `domain.money`: `Currency(code)`, `Money(amount: Decimal, currency:
+  Currency | None)`, `round_amount`, `round_rate`.
+- `domain.workbook`: `SheetView(name, rows)` with one-based row/cell access;
+  `WorkbookView(sheets)` with `find_sheet`/`require_sheet`. No library types.
+- `domain.models`: `CardHintKey(issuer_code, last4)`, `CardHint(key, label)`,
+  `OwnerHint(display_name)`, `AccountHint(bank_code, account_number,
+  display_name)` and `CardIdentityHint(card, owner, account)`.
+- `StatementContext(issuer_code, cards, owner, account, period, charge_date,
+  declared_totals)` has `identity_hints()`. Totals expose a read-only
+  `by_currency` mapping and `StatementTotals.of(*Money)`.
+- `ParsedTransaction(card_key, location, transaction_date, charge_date,
+  billing, merchant_name_raw, merchant_name_norm, transaction_type, original,
+  merchant_city, merchant_country, bank_category_raw, channel, notes,
+  issuer_reference, installment, installment_plan, fx, review_reasons)`;
+  optional fields default to None and reasons to frozenset.
+- `ParsedInstallmentRef(installment_number, total_installments, plan_total,
+  issuer_reference)` and `ParsedInstallmentPlan(card_key, merchant_name_norm,
+  purchase_date, total, total_installments, issuer_reference)`.
+- `StatementParseResult(transactions, issues, rows_seen, calculated_totals,
+  installment_plans=())`; frozen collections. Locations contain sheet
+  position and row, never raw sheet titles. FX stores commission and
+  stated/effective Decimal rates.
+- `WorkbookReader.open(Path) -> WorkbookView`;
+  `ParserSelector.select(WorkbookView) -> StatementParser`;
+  `IdentifierProtector.encrypt(IdentifierType, str) -> IdentifierToken` and
+  `decrypt(IdentifierType, IdentifierToken) -> str`.
+- `StatementParser.sniff`, `read_context`, `read_transactions` are exactly the
+  source contract, using the pure views and models above.
+- `IdentityResolver.complete(IdentityQuestion) -> IdentitySelection`;
+  `identity.models` defines explicit owner/account/card choices and
+  ID-or-create selections, candidates, determined owner/account, and
+  `ResolvedCards.card_id_for(CardHintKey) -> CardId`. A partial CreateCard
+  selection keeps already-determined owner/account. The service validates
+  ownership/conflicts and collects unresolved keys across the whole gate.
+- `persistence.commands` defines immutable NewImportRun/ImportRunOutcome,
+  NewOwner/NewAccount/NewCard, NewInstallmentPlan, NewTransaction,
+  NewForeignDetail, and NewTransactionAggregate. `persistence.records`
+  defines library-free owner/account/card records and CardLookup.
+- `persistence.interfaces` has audit start/finish/sweep, per-entity
+  list/get/find/create, installment `upsert_plans -> Mapping[command, id]`,
+  transaction `find_known_references -> frozenset[key]`,
+  `count_matching_groups -> Mapping[key, count]`, and
+  `insert_many -> tuple[TransactionId, ...]`. Creates flush real IDs.
+- `UnitOfWorkFactory.create() -> UnitOfWork`; UoW exposes six repositories,
+  commit/rollback and context exit rollback. Each factory call is a new session.
+- `domain.keys` defines exact reference/comparison dataclass keys and
+  OwnerMatchKey; shared domain text folding and account canonicalization.
+- `ImportReport` includes audit id/status/issuer, all four row counts,
+  rows_needing_review, issues, warnings, unresolved keys, and dry_run.
+  `services.report` re-exports the domain issue types, not copies.
 
 ## Acceptance and verification boundaries
 
@@ -193,11 +266,12 @@ Independent raw-workbook observations (not application test results):
   totals ILS 1337.60 and USD 26.39; statement charge date 2026-02-10.
 - Monthly Max: 142 domestic charged rows and 16 foreign charged rows, with
   totals ILS 20349.01 and 490.66 respectively. Footer rows are not pending.
-- Yearly Max includes 1563 domestic typed rows and 606 foreign typed rows;
-  row validity/pending classification must be verified against charge dates,
-  not inferred solely from a nonempty amount or transaction type.
-- Cal: banner declared ILS 645.13, charge date 2026-09-10; blank billed
-  amounts are pending. Do not modify sources to force reconciliation.
+- Yearly Max includes 1563 domestic rows (ILS 158460.88) and 606 foreign rows
+  (ILS 58102.80). The monthly file is a complete multiset subset; identical
+  repeated rows must survive. Foreign original currency is blank on 374 rows.
+- Cal: 21 data rows, eight charged and 13 pending; banner declared ILS 645.13,
+  charge date 2026-09-10. One installment carries a plan total of 1680 and
+  current charge 336. Do not modify sources to force reconciliation.
 
 ## Iteration and finding policy
 
@@ -221,6 +295,8 @@ Review is independent and applies to fixes and integration work too.
 | --- | --- | --- | --- |
 | BASELINE / 0 | `ced9245` | 17 authorized files; staged diff inspected; `git diff --cached --check` passed; credential-pattern scan of text and workbook cells found no credentials | Initial inputs preserved unchanged; clean tree before branch creation |
 | PLAN / 0 | `13de890` | Documentation only | Ownership/contracts recorded before implementation |
+| PLAN / 1 | `c3e7904` | Documentation diff inspected; staged whitespace check passed | Associated-data, dry-run, reference/NULL and owner-account invariants explicitly settled with independent reviewer |
+| APP-FOUNDATION / 1 | Pending leader commit | Owner RED: four collection errors for missing modules; owner and LEAD GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files | Initial implementation frozen for independent review |
 
 ### Findings ledger
 
@@ -230,5 +306,10 @@ Review is independent and applies to fixes and integration work too.
 | CONTRACT-02 | PARSE / ordering | Max card identities exist only in data column; user approved identity-column-only context scan | PARSE | 0 | Resolved by user decision; implementation/review pending |
 | CONTRACT-03 | Shared / dependency | Domain issue objects cannot import services; define in domain, re-export | APP | 0 | Agreed with reviewer; implementation pending |
 | CONTRACT-04 | Shared / data flow | Sequence requires parsed plans; add frozen plans tuple to result | APP | 0 | Agreed with reviewer; implementation pending |
+| CONTRACT-05 | APP / blocking | Independent reviewer identified dry-run ID lifetime conflict; one live identity/domain UoW flushes IDs then rolls back dry runs | APP | 0 | Accepted; contract clarified in `c3e7904` |
+| CONTRACT-06 | Shared / blocking | Independent reviewer required explicit identifier associated-data type on encrypt/decrypt | APP + STORE | 0 | Accepted; contract clarified in `c3e7904` |
+| DECISION-01 | PARSE / source fidelity | Rejected sign-normalizing refund original_amount: source plan requires billed/original, not an absolute rate | PARSE | 0 | Source signs preserved |
+| DECISION-02 | STORE / schema fidelity | Rejected partial natural installment unique index: source DDL requires unconditional natural uniqueness | STORE | 0 | Resolve both specified uniqueness conflicts without schema weakening |
 
-No application tests have run yet. No functionality is claimed complete.
+Only foundation tests have run so far. Issuer parsing, PostgreSQL persistence,
+import-service behavior and end-to-end validation are not yet implemented.
