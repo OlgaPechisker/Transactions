@@ -210,11 +210,6 @@ class _Applier:
         self._reject_identifiers(selection.display_name)
         owner = self._owner(selection, question)
         account = self._account(selection, evidence, question, owner)
-        existing = self._uow.cards.find_candidates(
-            CardLookup(evidence.hint.card.key.issuer_code, evidence.last4_enc, account.account_id)
-        )
-        if existing:
-            return existing[0].card_id
         card = NewCard(
             owner.owner_id,
             account.account_id,
@@ -361,7 +356,7 @@ class IdentityGate:
         if len(consistent) > 1:
             issue, offered = IdentityIssue.AMBIGUOUS_CARDS, consistent
         elif evidence.candidates or evidence.contradicts_owner():
-            issue, offered = IdentityIssue.CONFLICTING_HINTS, ()
+            issue, offered = IdentityIssue.CONFLICTING_HINTS, evidence.candidates
         else:
             issue, offered = IdentityIssue.NO_MATCHING_CARD, ()
         question = lookup.question(evidence, issue, offered, account, owner)

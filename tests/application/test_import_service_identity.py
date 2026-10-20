@@ -176,10 +176,8 @@ def test_without_an_answer_several_matching_cards_need_input(world, make_tx):
     assert world.stored == []
 
 
-def test_an_owner_who_differs_from_the_stored_card_is_a_conflict_with_no_card_to_reuse(
-    world, make_tx
-):
-    world.seed_card(owner="Dana Levi")
+def test_an_owner_who_differs_from_the_stored_card_is_a_conflict_offering_that_card(world, make_tx):
+    stored = world.seed_card(owner="Dana Levi")
     world.statement(world.context(owner="Noa Cohen"), world.result([make_tx()]))
     world.resolver.decide = lambda question: CreateCard(CreateOwner("Noa Cohen"), CreateAccount())
 
@@ -187,7 +185,7 @@ def test_an_owner_who_differs_from_the_stored_card_is_a_conflict_with_no_card_to
 
     (question,) = world.resolver.questions
     assert question.issue is IdentityIssue.CONFLICTING_HINTS
-    assert question.candidates == ()
+    assert [c.card_id for c in question.candidates] == [stored.card_id]
     assert len(world.db.domain.cards) == 2
     assert world.stored[0].transaction.card_id == 2
 
@@ -415,4 +413,72 @@ def test_an_account_number_already_owned_by_someone_else_cannot_be_created_again
     with pytest.raises(InvalidIdentitySelectionError):
         world.service().import_file(world.statement_file())
 
+    assert len(world.db.domain.owners) == 1
+
+
+# --- explicit answers are honoured: a creation creates, only UseCard reuses ---------------
+
+
+def test_creating_a_card_among_ambiguous_same_account_cards_makes_a_distinct_card(world, make_tx):
+    first = world.seed_card()
+    second = world.seed_card(same_account_as=first)
+    world.statement(world.context(), world.result([make_tx()]))
+    world.resolver.decide = lambda question: CreateCard(
+        UseOwner(first.owner_id), UseAccount(first.account_id)
+    )
+
+    world.service().import_file(world.statement_file())
+
+    (question,) = world.resolver.questions
+    assert question.issue is IdentityIssue.AMBIGUOUS_CARDS
+    created = max(world.db.domain.cards)
+    assert created not in (first.card_id, second.card_id)
+    assert len(world.db.domain.cards) == 3
+    assert world.db.domain.cards[created].account_id == first.account_id
+    assert world.stored[0].transaction.card_id == created
+
+
+def test_creating_a_card_on_an_account_that_already_has_matching_cards_makes_a_new_one(
+    world, make_tx
+):
+    card = world.seed_card(owner="Dana Levi")
+    world.statement(world.context(owner="Noa Cohen"), world.result([make_tx()]))
+    world.resolver.decide = lambda question: CreateCard(
+        UseOwner(card.owner_id), UseAccount(card.account_id)
+    )
+
+    world.service().import_file(world.statement_file())
+
+    (question,) = world.resolver.questions
+    assert question.issue is IdentityIssue.CONFLICTING_HINTS
+    assert len(world.db.domain.cards) == 2
+    assert world.stored[0].transaction.card_id != card.card_id
+
+
+def test_conflicting_hints_offer_the_stored_cards_and_an_explicit_choice_binds_that_card(
+    world, make_tx
+):
+    card = world.seed_card(owner="Dana Levi")
+    world.statement(world.context(owner="Noa Cohen"), world.result([make_tx()]))
+    world.resolver.decide = lambda question: UseCard(card.card_id)
+
+    report = world.service().import_file(world.statement_file())
+
+    (question,) = world.resolver.questions
+    assert question.issue is IdentityIssue.CONFLICTING_HINTS
+    assert [c.card_id for c in question.candidates] == [card.card_id]
+    assert report.status is ImportStatus.SUCCESS
+    assert [a.transaction.card_id for a in world.stored] == [card.card_id]
+    assert len(world.db.domain.cards) == 1
+
+
+def test_without_an_answer_conflicting_hints_need_input_and_change_nothing(world, make_tx):
+    world.seed_card(owner="Dana Levi")
+    world.statement(world.context(owner="Noa Cohen"), world.result([make_tx()]))
+
+    report = world.service().import_file(world.statement_file())
+
+    assert report.status is ImportStatus.NEEDS_INPUT
+    assert world.stored == []
+    assert len(world.db.domain.cards) == 1
     assert len(world.db.domain.owners) == 1

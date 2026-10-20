@@ -607,21 +607,28 @@ class World:
         owner: str = "Dana Levi",
         account_number: str | None = "8917221038",
         bank_code: str | None = "LEUMI",
+        same_account_as: CardRecord | None = None,
     ) -> CardRecord:
         """Committed identity data, created directly (as an earlier import would have)."""
         with self.factory.create() as uow:
-            key = OwnerMatchKey.from_display_name(owner)
-            record = uow.owners.find_by_match_key(key) or uow.owners.create(NewOwner(owner, key))
-            number = (
-                self.token(IdentifierType.ACCOUNT_NUMBER, account_number)
-                if account_number
-                else None
-            )
-            account = uow.accounts.create(NewAccount(record.owner_id, bank_code, number, None))
+            if same_account_as is not None:
+                owner_id, account_id = same_account_as.owner_id, same_account_as.account_id
+            else:
+                key = OwnerMatchKey.from_display_name(owner)
+                record = uow.owners.find_by_match_key(key) or uow.owners.create(
+                    NewOwner(owner, key)
+                )
+                number = (
+                    self.token(IdentifierType.ACCOUNT_NUMBER, account_number)
+                    if account_number
+                    else None
+                )
+                account = uow.accounts.create(NewAccount(record.owner_id, bank_code, number, None))
+                owner_id, account_id = record.owner_id, account.account_id
             card = uow.cards.create(
                 NewCard(
-                    record.owner_id,
-                    account.account_id,
+                    owner_id,
+                    account_id,
                     issuer,
                     self.token(IdentifierType.CARD_LAST4, last4),
                     None,

@@ -8,8 +8,10 @@ preserved. The user then requested **"continue implementation process"** before
 this checkpoint documentation was committed. Work has RESUMED at independent
 APP review and LEAD verification. LEAD's initial APP candidate verification now
 passes, including installed-wheel CLI acceptance. Independent Opus review
-returned **BLOCK** for two identity-selection defects; their first correction
-is assigned to the original APP owner. The overall task is incomplete.
+returned **BLOCK** for two identity-selection defects. Their first production
+correction is delivered; its initial verification failed on a new test's SQL
+column typo. The failed state and test-only correction are being preserved in
+separate commits before re-review. The overall task is incomplete.
 
 - Base branch: `master`, authorized baseline `ced9245`; it remains unchanged.
 - Implementation branch: `implementation/bank-transactions`.
@@ -96,6 +98,32 @@ any review corrections. The acceptance harness initially assumed `Scripts`
 instead of pip's Windows `--target` `bin` directory; correcting that harness
 assumption required no application change. Its eager wheel-path evaluation was
 also corrected before the first execution.
+
+### APP iteration 2: first correction and unsuccessful test verification
+
+The original APP owner added six regressions and changed the previous
+empty-candidate assertion to the required offered-card behavior. Genuine RED
+against unchanged production was **6 failed / 41 passed**, including the two
+real-PostgreSQL identity regressions. The production correction removes the
+first-card reuse branch and offers stored candidates for conflicting hints;
+automatic uncontested reuse remains unchanged.
+
+The first post-correction run was **46 passed / 1 failed**: the new duplicate-card
+PostgreSQL test queried `cards.card_id`, but the prescribed primary key is `id`.
+The owner corrected two test-only SQL strings before freezing and reported a
+subsequent full **939 passed**, lint/format and mypy pass. No production code
+changed after the initial 46/1 verification.
+
+That test-only correction should have been checkpointed separately before
+continuing. To preserve both actual verification states, LEAD obtained the exact
+original SQL strings from the owner's retained failure output and replayed
+them: independently **46 passed / 1 failed in 6.80 seconds**, with the same
+`UndefinedColumn` error. APP iteration 2 preserves that unsuccessful
+verification state; APP iteration 3 will separately preserve the already-authored
+test-only SQL correction. This replay is explicitly not original test-first
+RED, and does not claim a byte-for-byte snapshot of the owner's pre-formatting
+workspace. No additional production correction or counter reset occurred.
+Independent final verification and Opus re-review are still required.
 
 | Original example | Owner-reported PostgreSQL result |
 | --- | --- |
@@ -497,7 +525,7 @@ Review is independent and applies to fixes and integration work too.
 | APP-SHARED / 3 | `f63f9df` | Owner and LEAD 52 text/import-graph tests pass; REVIEW 115 domain tests and scoped lint/format/type/purity checks pass | Opus PASS; original test-first RED not captured, reconstructed RED explicitly excluded from evidence |
 | STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 focused checks pass; REVIEW 76 selected privacy/resolver tests and full strict mypy 60 source files pass | Opus PASS; CLI and service share pure label validation without behavior or public-contract changes |
 | APP / 1 | `d66a31d` | LEAD and Opus independently reproduce 933 tests, lint/format 129 files and strict mypy 69 source files; LEAD fresh installed-wheel CLI passes 18 console invocations with SQL goldens outside checkout | Opus BLOCK for APP-PC-01/02; both recommendations independently validated by LEAD |
-| APP / 2 | Pending owner delivery | Genuine RED and one bounded correction/verification attempt requested for APP-PC-01/02 | Original owner implementing; separate correction commit and original Opus re-review required |
+| APP / 2 | This correction commit | Owner genuine RED 6 failed / 41 passed; first correction verification 46 passed / 1 failed due to test SQL, independently replayed by LEAD in 6.80 seconds | UNSUCCESSFUL verification state preserved; production fix unchanged, test-only APP3 correction and Opus re-review required |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
@@ -535,8 +563,9 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 | A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 1 | Resolved; fresh builds and stale-module regression independently approved in `b0d059b` |
 | A2 | APP-SHARED / LOW | Fake account none/one/many test only returns its configured value | APP + STORE | 1 | Fake removed in `b0d059b`; actual PostgreSQL zero/one/many, ordering and known-bank isolation pass |
 | A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 1 | Unused glob removed in `b0d059b`; single canonical migration implementation preserved |
-| APP-PC-01 | APP / HIGH | Opus actual-service probe binds explicit CreateCard to card 1 of 2 and creates none; LEAD validated `existing[0]` against plan section 6 / diagram's nonunique physical-card and explicit-selection rules | APP | 0 completed | First correction assigned in APP2; actual CreateCard must create, not implicitly reuse |
-| APP-PC-02 | APP / MEDIUM | Opus actual-service probe cannot select a conflicting existing card because `_bind` offers no candidates; LEAD validated required explicit selection against plan section 6 and diagram | APP | 0 completed | First correction assigned in APP2; offer issuer/last-4 candidates, preserve noninteractive NEEDS_INPUT |
+| APP-PC-01 | APP / HIGH | Opus actual-service probe binds explicit CreateCard to card 1 of 2 and creates none; LEAD validated `existing[0]` against plan section 6 / diagram's nonunique physical-card and explicit-selection rules | APP | 1 | Production correction delivered in APP2; test SQL follow-up and independent re-review pending |
+| APP-PC-02 | APP / MEDIUM | Opus actual-service probe cannot select a conflicting existing card because `_bind` offers no candidates; LEAD validated required explicit selection against plan section 6 and diagram | APP | 1 | Production correction delivered in APP2; noninteractive behavior retained; independent re-review pending |
+| APP-TEST-01 | APP / test validity | New PostgreSQL regression used `cards.card_id` instead of `id`; LEAD reproduced initial 46/1 failure from exact owner-reported SQL | APP | 1 owner correction | Owner-authored SQL-only correction reported 939 green; preserve separately as APP3 before re-review |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
@@ -580,8 +609,9 @@ CLI adoption are independently approved. The user requested a pause after APP
 delivery, then resumed before its documentation checkpoint was committed.
 LEAD full verification and installed-wheel CLI acceptance now pass for the
 initial APP candidate. Independent APP review returned BLOCK for the two
-validated identity findings. The original owner is making their first
-correction; separate commit, re-review and final acceptance/reporting remain
-pending.
+validated identity findings. The original owner's production correction is
+delivered, with its initially unsuccessful test-query verification preserved
+separately from the SQL-only correction. Independent re-review and final
+acceptance/reporting remain pending.
 Two old test schemas reported by STORE are preserved because their active-run
 attribution was uncertain; no unattributed schema was dropped.

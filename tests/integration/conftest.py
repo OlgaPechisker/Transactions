@@ -202,8 +202,23 @@ def seed_card(factory: UnitOfWorkFactory, cipher: IdentifierCipher) -> Callable[
         owner_name: str = "Seeded Owner",
         account_number: str | None = None,
         bank_code: str | None = None,
+        same_account_as: SeededCard | None = None,
     ) -> SeededCard:
         with factory.create() as uow:
+            if same_account_as is not None:
+                card = uow.cards.create(
+                    NewCard(
+                        same_account_as.owner_id,
+                        same_account_as.account_id,
+                        issuer,
+                        cipher.encrypt(IdentifierType.CARD_LAST4, last4),
+                        None,
+                    )
+                )
+                uow.commit()
+                return SeededCard(
+                    same_account_as.owner_id, same_account_as.account_id, card.card_id
+                )
             match_key = OwnerMatchKey.from_display_name(owner_name)
             owner = uow.owners.find_by_match_key(match_key) or uow.owners.create(
                 NewOwner(owner_name, match_key)
