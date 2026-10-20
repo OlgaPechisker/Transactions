@@ -175,12 +175,12 @@ def test_creating_a_card_among_duplicate_physical_cards_adds_one_and_binds_the_f
     assert report.status is ImportStatus.SUCCESS
     assert scalar("SELECT count(*) FROM cards") == 4
     created = scalar(
-        "SELECT max(card_id) FROM cards WHERE card_id NOT IN (:a, :b, :c)",
+        "SELECT max(id) FROM cards WHERE id NOT IN (:a, :b, :c)",
         a=first.card_id,
         b=second.card_id,
         c=other.card_id,
     )
-    assert scalar("SELECT account_id FROM cards WHERE card_id = :c", c=created) == first.account_id
+    assert scalar("SELECT account_id FROM cards WHERE id = :c", c=created) == first.account_id
     assert scalar("SELECT count(*) FROM transactions WHERE card_id = :c", c=created) > 0
     assert (
         scalar(

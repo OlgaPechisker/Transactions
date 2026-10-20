@@ -10,8 +10,9 @@ APP review and LEAD verification. LEAD's initial APP candidate verification now
 passes, including installed-wheel CLI acceptance. Independent Opus review
 returned **BLOCK** for two identity-selection defects. Their first production
 correction is delivered; its initial verification failed on a new test's SQL
-column typo. The failed state and test-only correction are being preserved in
-separate commits before re-review. The overall task is incomplete.
+column typo. The failed state is preserved in APP2, and APP3 records the
+test-only correction with 47 targeted tests passing. Independent re-review and
+final acceptance remain pending. The overall task is incomplete.
 
 - Base branch: `master`, authorized baseline `ced9245`; it remains unchanged.
 - Implementation branch: `implementation/bank-transactions`.
@@ -124,6 +125,18 @@ test-only SQL correction. This replay is explicitly not original test-first
 RED, and does not claim a byte-for-byte snapshot of the owner's pre-formatting
 workspace. No additional production correction or counter reset occurred.
 Independent final verification and Opus re-review are still required.
+
+### APP iteration 3: SQL-only regression correction
+
+APP iteration 2's unsuccessful state is preserved at **`6de265e`**. This
+iteration applies the original owner's already-authored two SQL corrections:
+`max(card_id)` / `WHERE card_id` on the `cards` table become `max(id)` /
+`WHERE id`. No production code changes. LEAD independently reran both affected
+identity test modules: **47 passed in 5.84 seconds**; full ruff passed, all
+129 files passed formatting, and strict mypy passed on 69 source files.
+The owner previously reported 939 full-suite tests passing for this same
+corrected source/test state. LEAD's final full-suite run, expanded installed
+console acceptance and original Opus re-review follow the separate commit.
 
 | Original example | Owner-reported PostgreSQL result |
 | --- | --- |
@@ -525,7 +538,8 @@ Review is independent and applies to fixes and integration work too.
 | APP-SHARED / 3 | `f63f9df` | Owner and LEAD 52 text/import-graph tests pass; REVIEW 115 domain tests and scoped lint/format/type/purity checks pass | Opus PASS; original test-first RED not captured, reconstructed RED explicitly excluded from evidence |
 | STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 focused checks pass; REVIEW 76 selected privacy/resolver tests and full strict mypy 60 source files pass | Opus PASS; CLI and service share pure label validation without behavior or public-contract changes |
 | APP / 1 | `d66a31d` | LEAD and Opus independently reproduce 933 tests, lint/format 129 files and strict mypy 69 source files; LEAD fresh installed-wheel CLI passes 18 console invocations with SQL goldens outside checkout | Opus BLOCK for APP-PC-01/02; both recommendations independently validated by LEAD |
-| APP / 2 | This correction commit | Owner genuine RED 6 failed / 41 passed; first correction verification 46 passed / 1 failed due to test SQL, independently replayed by LEAD in 6.80 seconds | UNSUCCESSFUL verification state preserved; production fix unchanged, test-only APP3 correction and Opus re-review required |
+| APP / 2 | `6de265e` | Owner genuine RED 6 failed / 41 passed; first correction verification 46 passed / 1 failed due to test SQL, independently replayed by LEAD in 6.80 seconds | UNSUCCESSFUL verification state preserved; production fix unchanged, test-only APP3 correction follows |
+| APP / 3 | This SQL-only correction commit | LEAD 47 affected tests pass in 5.84 seconds, full lint/format 129 files and strict mypy 69 source files pass; owner previously reported full 939 pass on the same corrected state | No production change; final full/installed-CLI acceptance and original Opus re-review pending |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
@@ -565,7 +579,7 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 | A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 1 | Unused glob removed in `b0d059b`; single canonical migration implementation preserved |
 | APP-PC-01 | APP / HIGH | Opus actual-service probe binds explicit CreateCard to card 1 of 2 and creates none; LEAD validated `existing[0]` against plan section 6 / diagram's nonunique physical-card and explicit-selection rules | APP | 1 | Production correction delivered in APP2; test SQL follow-up and independent re-review pending |
 | APP-PC-02 | APP / MEDIUM | Opus actual-service probe cannot select a conflicting existing card because `_bind` offers no candidates; LEAD validated required explicit selection against plan section 6 and diagram | APP | 1 | Production correction delivered in APP2; noninteractive behavior retained; independent re-review pending |
-| APP-TEST-01 | APP / test validity | New PostgreSQL regression used `cards.card_id` instead of `id`; LEAD reproduced initial 46/1 failure from exact owner-reported SQL | APP | 1 owner correction | Owner-authored SQL-only correction reported 939 green; preserve separately as APP3 before re-review |
+| APP-TEST-01 | APP / test validity | New PostgreSQL regression used `cards.card_id` instead of `id`; LEAD reproduced initial 46/1 failure from exact owner-reported SQL | APP | 1 | APP3 separately preserves owner-authored SQL-only correction; LEAD 47 affected tests pass, independent re-review pending |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
