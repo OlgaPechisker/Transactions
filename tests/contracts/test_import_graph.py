@@ -80,3 +80,39 @@ def test_service_report_depends_only_on_domain():
         and not name.startswith(("bank_transactions.domain", "bank_transactions.services"))
     ]
     assert outside_domain == []
+
+
+APPLICATION_RUNTIME_MODULES = [
+    "bank_transactions.config",
+    "bank_transactions.cli",
+    "bank_transactions.services.import_service",
+    "bank_transactions.services.identity_gate",
+    "bank_transactions.services.audit_trail",
+    "bank_transactions.services.deduplication",
+    "bank_transactions.services.totals_check",
+]
+CONCRETE_ADAPTER_MODULES = (
+    "bank_transactions.bootstrap",
+    "bank_transactions.parsing.banks",
+    "bank_transactions.parsing.workbook",
+    "bank_transactions.persistence.db",
+    "bank_transactions.persistence.uow",
+    "bank_transactions.identity.crypto",
+    "bank_transactions.identity.cli_resolver",
+)
+
+
+@pytest.mark.parametrize("module", APPLICATION_RUNTIME_MODULES)
+def test_the_import_service_runtime_loads_no_heavy_library_or_concrete_adapter(module):
+    loaded = loaded_after_import(module)
+
+    heavy = [name for name in loaded if name.split(".")[0] in HEAVY_LIBRARIES]
+    adapters = [name for name in loaded if name.startswith(CONCRETE_ADAPTER_MODULES)]
+    assert (heavy, adapters) == ([], [])
+
+
+def test_only_the_composition_root_pulls_the_concrete_adapters_in():
+    loaded = loaded_after_import("bank_transactions.bootstrap")
+
+    heavy = {name.split(".")[0] for name in loaded if name.split(".")[0] in HEAVY_LIBRARIES}
+    assert {"sqlalchemy", "openpyxl", "cryptography"} <= heavy
