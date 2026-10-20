@@ -1,12 +1,20 @@
 """Pure text helpers shared by parsing and identity so matching never diverges."""
 
 import re
+from collections.abc import Iterable
 
 _APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "׳": "'", "`": "'", "´": "'"})
 _QUOTES = str.maketrans({"״": '"', "“": '"', "”": '"', "„": '"'})
 _WHITESPACE = re.compile(r"\s+")
 _ACCOUNT_SEPARATORS = re.compile(r"[\s\-./]")
 _ASCII_DIGITS = re.compile(r"[0-9]+")
+
+
+def contains_identifier(text: str, identifiers: Iterable[str]) -> bool:
+    """True when free text repeats a card or account number, even split by separators.
+    Used to keep identifiers out of labels the user or a resolver may type."""
+    compact = _ACCOUNT_SEPARATORS.sub("", text)
+    return any(identifier in text or identifier in compact for identifier in identifiers)
 
 
 def fold_text(value: str) -> str:
