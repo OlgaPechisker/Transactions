@@ -20,6 +20,7 @@ from bank_transactions.domain.ids import (
     OwnerId,
 )
 from bank_transactions.domain.keys import OwnerMatchKey
+from bank_transactions.domain.models import ParsedFxDetail
 from bank_transactions.domain.money import ILS, USD
 from bank_transactions.persistence.commands import (
     ImportRunOutcome,
@@ -128,6 +129,55 @@ def test_aggregate_carries_one_transaction_reasons_and_at_most_one_fx_detail():
     assert aggregate.review_reasons == frozenset({ReviewReason.UNKNOWN_CURRENCY})
     assert isinstance(aggregate.review_reasons, frozenset)
     assert aggregate.foreign_detail.effective_fx_rate == Decimal("3.66")
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("1.005", "1.01"), ("-1.005", "-1.01"), ("120", "120.00"), ("0.004", "0.00")],
+)
+def test_transaction_amounts_are_quantized_to_two_places_half_up(raw, expected):
+    transaction = new_transaction(
+        billing_amount=Decimal(raw),
+        original_amount=Decimal(raw),
+        original_currency=USD,
+    )
+
+    assert transaction.billing_amount == Decimal(expected)
+    assert transaction.original_amount == Decimal(expected)
+    assert transaction.billing_amount.as_tuple().exponent == -2
+
+
+def test_missing_original_amount_stays_missing():
+    assert new_transaction(original_amount=None).original_amount is None
+
+
+def test_foreign_detail_rounds_commission_to_two_places_and_rates_to_six():
+    detail = NewForeignDetail(
+        commission_amount=Decimal("-2.505"),
+        stated_fx_rate=Decimal("3.6600005"),
+        effective_fx_rate=Decimal("-3.6850004"),
+    )
+
+    assert detail.commission_amount == Decimal("-2.51")
+    assert detail.stated_fx_rate == Decimal("3.660001")
+    assert detail.effective_fx_rate == Decimal("-3.685000")
+
+
+def test_foreign_detail_without_a_stated_rate_keeps_it_missing():
+    assert NewForeignDetail(Decimal("0"), None, Decimal("3.66")).stated_fx_rate is None
+
+
+def test_quantizing_the_command_leaves_the_parsed_full_precision_untouched():
+    parsed = ParsedFxDetail(Decimal("0.005"), None, Decimal("3.66000012345"))
+
+    command = NewForeignDetail(
+        parsed.commission_amount, parsed.stated_fx_rate, parsed.effective_fx_rate
+    )
+
+    assert parsed.effective_fx_rate == Decimal("3.66000012345")
+    assert parsed.commission_amount == Decimal("0.005")
+    assert command.effective_fx_rate == Decimal("3.660000")
+    assert command.commission_amount == Decimal("0.01")
 
 
 def test_aggregate_is_immutable():

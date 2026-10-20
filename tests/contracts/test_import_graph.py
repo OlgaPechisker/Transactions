@@ -1,10 +1,19 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
+import bank_transactions
+
 HEAVY_LIBRARIES = ("sqlalchemy", "openpyxl", "cryptography", "alembic", "psycopg")
+DOMAIN_DIRECTORY = Path(bank_transactions.__file__).parent / "domain"
+DOMAIN_MODULES = sorted(
+    f"bank_transactions.domain.{path.stem}"
+    for path in DOMAIN_DIRECTORY.glob("*.py")
+    if path.stem != "__init__"
+)
 CONTRACT_MODULES = [
     "bank_transactions.domain",
     "bank_transactions.ports",
@@ -18,6 +27,7 @@ CONTRACT_MODULES = [
     "bank_transactions.persistence.commands",
     "bank_transactions.persistence.records",
     "bank_transactions.services.report",
+    *DOMAIN_MODULES,
 ]
 
 
@@ -26,7 +36,18 @@ def loaded_after_import(module):
     completed = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, check=True
     )
-    return json.loads(completed.stdout)
+    loaded = json.loads(completed.stdout)
+    assert module in loaded
+    return loaded
+
+
+def test_every_concrete_domain_module_is_covered():
+    assert {
+        "bank_transactions.domain.models",
+        "bank_transactions.domain.money",
+        "bank_transactions.domain.workbook",
+        "bank_transactions.domain.keys",
+    } <= set(DOMAIN_MODULES)
 
 
 @pytest.mark.parametrize("module", CONTRACT_MODULES)
@@ -37,8 +58,9 @@ def test_contract_modules_do_not_import_heavy_libraries(module):
     assert offenders == []
 
 
-def test_domain_depends_on_no_other_application_package():
-    loaded = loaded_after_import("bank_transactions.domain")
+@pytest.mark.parametrize("module", DOMAIN_MODULES)
+def test_each_domain_module_depends_on_no_other_application_package(module):
+    loaded = loaded_after_import(module)
 
     sibling_packages = [
         name

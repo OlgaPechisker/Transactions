@@ -15,7 +15,7 @@ from bank_transactions.domain.enums import (
 )
 from bank_transactions.domain.immutability import freeze_field
 from bank_transactions.domain.issues import RowIssue, SourceLocation
-from bank_transactions.domain.money import Currency, Money
+from bank_transactions.domain.money import Currency, Money, effective_fx_rate
 from bank_transactions.domain.text import canonical_account_number
 
 
@@ -64,8 +64,14 @@ class AccountHint:
 
 @dataclass(frozen=True)
 class CardHint:
+    """`label` is product text only (e.g. a card product name); it never carries an identifier."""
+
     key: CardHintKey
     label: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.label is not None and self.key.last4 in self.label:
+            raise ValueError("card label must not contain the card identifier")
 
 
 @dataclass(frozen=True)
@@ -256,6 +262,10 @@ class ParsedTransaction:
             return
         if self.original is None or self.original.is_zero() or self.billing.currency is None:
             raise ValueError("a foreign transaction needs an original amount and billing currency")
+        if self.fx.effective_fx_rate != effective_fx_rate(
+            self.billing.amount, self.original.amount
+        ):
+            raise ValueError("effective FX rate disagrees with the billing and original amounts")
 
 
 @dataclass(frozen=True)

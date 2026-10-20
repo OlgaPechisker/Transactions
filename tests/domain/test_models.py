@@ -27,7 +27,7 @@ from bank_transactions.domain.models import (
     StatementPeriod,
     StatementTotals,
 )
-from bank_transactions.domain.money import ILS, USD, Money
+from bank_transactions.domain.money import ILS, USD, Money, effective_fx_rate
 
 KEY = CardHintKey(IssuerCode.CAL, "0538")
 
@@ -47,6 +47,21 @@ def test_card_key_requires_exactly_four_ascii_digits(last4):
 def test_card_key_repr_never_shows_the_last4():
     assert "0538" not in repr(KEY)
     assert "0538" not in str(KEY)
+
+
+def test_card_label_is_product_text_without_the_last4():
+    assert CardHint(KEY, label="Visa Platinum").label == "Visa Platinum"
+
+
+def test_card_label_containing_the_last4_is_rejected_without_leaking_it():
+    with pytest.raises(ValueError) as caught:
+        CardHint(KEY, label="פלטינה מסטרקארד - 0538")
+
+    assert "0538" not in str(caught.value)
+
+
+def test_card_repr_with_a_valid_label_never_shows_the_last4():
+    assert "0538" not in repr(CardHint(KEY, label="Visa"))
 
 
 def test_account_hint_canonicalizes_the_account_number():
@@ -221,6 +236,57 @@ def test_foreign_transaction_exposes_fx_detail(make_transaction):
 
     assert transaction.is_foreign is True
     assert transaction.fx.effective_fx_rate == Decimal("-3.66")
+
+
+def foreign_transaction(make_transaction, billing, original, rate):
+    return make_transaction(
+        billing=Money(Decimal(billing), ILS),
+        original=Money(Decimal(original), USD),
+        fx=ParsedFxDetail(Decimal("0"), Decimal("3.66"), Decimal(rate)),
+    )
+
+
+def test_effective_rate_matching_billing_over_original_is_accepted_with_its_sign(
+    make_transaction,
+):
+    refund = foreign_transaction(make_transaction, "-366.00", "100.00", "-3.66")
+    charge = foreign_transaction(make_transaction, "366.00", "100.00", "3.66")
+
+    assert refund.fx.effective_fx_rate == effective_fx_rate(Decimal("-366.00"), Decimal("100.00"))
+    assert charge.is_foreign
+
+
+def test_effective_rate_keeps_full_precision_on_the_parsed_objects(make_transaction):
+    rate = effective_fx_rate(Decimal("366.000012"), Decimal("100"))
+    transaction = foreign_transaction(make_transaction, "366.000012", "100", str(rate))
+
+    assert transaction.billing.amount == Decimal("366.000012")
+    assert transaction.fx.effective_fx_rate == Decimal("3.66000012")
+
+
+def test_stale_rate_is_rejected_when_the_billing_amount_changes(make_transaction):
+    transaction = foreign_transaction(make_transaction, "-366.00", "100.00", "-3.66")
+    with_fee = Money(Decimal("-368.50"), ILS)
+
+    with pytest.raises(ValueError):
+        dataclasses.replace(transaction, billing=with_fee)
+
+
+def test_rate_with_the_wrong_sign_is_rejected(make_transaction):
+    with pytest.raises(ValueError):
+        foreign_transaction(make_transaction, "-366.00", "100.00", "3.66")
+
+
+def test_fee_update_is_valid_once_the_rate_is_recomputed(make_transaction):
+    transaction = foreign_transaction(make_transaction, "-366.00", "100.00", "-3.66")
+    new_billing = Money(Decimal("-368.50"), ILS)
+    refreshed = ParsedFxDetail(
+        Decimal("-2.50"), Decimal("3.66"), effective_fx_rate(new_billing.amount, Decimal("100.00"))
+    )
+
+    updated = dataclasses.replace(transaction, billing=new_billing, fx=refreshed)
+
+    assert updated.fx.effective_fx_rate == Decimal("-3.685")
 
 
 def test_fx_needs_a_non_zero_original_amount_and_known_billing_currency(make_transaction):

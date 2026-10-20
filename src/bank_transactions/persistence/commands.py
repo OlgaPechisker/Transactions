@@ -21,7 +21,7 @@ from bank_transactions.domain.ids import (
 )
 from bank_transactions.domain.immutability import freeze_field
 from bank_transactions.domain.keys import OwnerMatchKey
-from bank_transactions.domain.money import Currency, round_amount
+from bank_transactions.domain.money import Currency, round_amount, round_rate
 
 
 @dataclass(frozen=True)
@@ -101,7 +101,7 @@ class NewInstallmentPlan:
 
 @dataclass(frozen=True)
 class NewTransaction:
-    """Amounts keep full precision; repositories round with money.round_amount/round_rate."""
+    """Amounts are quantized here, once, to 2 places half-up; repositories store them as given."""
 
     card_id: CardId
     import_run_id: ImportRunId
@@ -123,12 +123,25 @@ class NewTransaction:
     installment_plan_id: InstallmentPlanId | None
     installment_number: int | None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "billing_amount", round_amount(self.billing_amount))
+        if self.original_amount is not None:
+            object.__setattr__(self, "original_amount", round_amount(self.original_amount))
+
 
 @dataclass(frozen=True)
 class NewForeignDetail:
+    """Commission is quantized to 2 places and both rates to 6 places, half-up, once."""
+
     commission_amount: Decimal
     stated_fx_rate: Decimal | None
     effective_fx_rate: Decimal
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "commission_amount", round_amount(self.commission_amount))
+        if self.stated_fx_rate is not None:
+            object.__setattr__(self, "stated_fx_rate", round_rate(self.stated_fx_rate))
+        object.__setattr__(self, "effective_fx_rate", round_rate(self.effective_fx_rate))
 
 
 @dataclass(frozen=True)

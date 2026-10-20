@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import pytest
 
@@ -7,6 +7,7 @@ from bank_transactions.domain.money import (
     USD,
     Currency,
     Money,
+    effective_fx_rate,
     round_amount,
     round_rate,
 )
@@ -74,3 +75,17 @@ def test_round_amount_is_half_away_from_zero_with_two_places():
 
 def test_round_rate_keeps_six_places():
     assert round_rate(Decimal("0.0183456789")) == Decimal("0.018346")
+
+
+def test_effective_rate_is_signed_billing_over_original_at_full_precision():
+    assert effective_fx_rate(Decimal("-366.00"), Decimal("100.00")) == Decimal("-3.66")
+    assert effective_fx_rate(Decimal("1"), Decimal("3")) == Decimal(1) / Decimal(3)
+    assert len(effective_fx_rate(Decimal("1"), Decimal("3")).as_tuple().digits) == 28
+
+
+def test_effective_rate_is_independent_of_the_ambient_decimal_context():
+    with localcontext() as context:
+        context.prec = 5
+        rate = effective_fx_rate(Decimal("1"), Decimal("3"))
+
+    assert rate == effective_fx_rate(Decimal("1"), Decimal("3"))

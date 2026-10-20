@@ -1,11 +1,12 @@
 import re
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Self
 
 AMOUNT_PLACES = Decimal("0.01")
 RATE_PLACES = Decimal("0.000001")
 _CURRENCY_CODE = re.compile(r"[A-Z]{3}")
+_RATE_CONTEXT = Context(prec=28)
 
 
 def round_amount(amount: Decimal) -> Decimal:
@@ -16,6 +17,11 @@ def round_amount(amount: Decimal) -> Decimal:
 def round_rate(rate: Decimal) -> Decimal:
     """NUMERIC(18,6) rounding; applied only when a rate is persisted."""
     return rate.quantize(RATE_PLACES, rounding=ROUND_HALF_UP)
+
+
+def effective_fx_rate(billing: Decimal, original: Decimal) -> Decimal:
+    """Signed billing/original at full precision, independent of the ambient decimal context."""
+    return _RATE_CONTEXT.divide(billing, original)
 
 
 @dataclass(frozen=True, order=True)

@@ -98,6 +98,15 @@ Other contract clarifications, derived from the stated invariants:
   last-4/account identifiers and diagnostic output have the explicit
   confidentiality boundary. Keep raw merchant text while extracting only
   confidently recognized location suffixes.
+- Precision boundary (independent review ruling): parsed money/FX retains full
+  Decimal precision. Immutable persistence commands round money to two places
+  and rates to six using HALF_UP, exactly once; repositories store command
+  values as supplied. Comparison and plan keys use the same amount rounding.
+  Do not reject source values solely for having more than two decimal places.
+- STORE's pure `TransactionMapper` exposes `reference_key(tx, card_id)`,
+  `comparison_key(tx, card_id)`, `plan_command(plan, card_id)` and
+  `to_aggregate(tx, card_id, run_id, plan_id=None)`; no SQLAlchemy imports.
+  Invalid cipher keys/tokens/type binding raise neutral ValueError.
 
 ## Agent capabilities and ownership
 
@@ -183,7 +192,8 @@ The following modules are the authoritative typed contract definitions:
 - `domain.ids`: NewType owner/account/card/import-run/installment-plan/
   transaction IDs and IdentifierToken.
 - `domain.money`: `Currency(code)`, `Money(amount: Decimal, currency:
-  Currency | None)`, `round_amount`, `round_rate`.
+  Currency | None)`, `round_amount`, `round_rate`, and shared signed
+  `effective_fx_rate(billing, original)` at deterministic 28-digit precision.
 - `domain.workbook`: `SheetView(name, rows)` with one-based row/cell access;
   `WorkbookView(sheets)` with `find_sheet`/`require_sheet`. No library types.
 - `domain.models`: `CardHintKey(issuer_code, last4)`, `CardHint(key, label)`,
@@ -296,7 +306,8 @@ Review is independent and applies to fixes and integration work too.
 | BASELINE / 0 | `ced9245` | 17 authorized files; staged diff inspected; `git diff --cached --check` passed; credential-pattern scan of text and workbook cells found no credentials | Initial inputs preserved unchanged; clean tree before branch creation |
 | PLAN / 0 | `13de890` | Documentation only | Ownership/contracts recorded before implementation |
 | PLAN / 1 | `c3e7904` | Documentation diff inspected; staged whitespace check passed | Associated-data, dry-run, reference/NULL and owner-account invariants explicitly settled with independent reviewer |
-| APP-FOUNDATION / 1 | Pending leader commit | Owner RED: four collection errors for missing modules; owner and LEAD GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files | Initial implementation frozen for independent review |
+| APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
+| APP-FOUNDATION / 2 | Pending leader commit | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner and LEAD GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Corrections independently reproduced as fixed; Opus re-review pending |
 
 ### Findings ledger
 
@@ -310,6 +321,16 @@ Review is independent and applies to fixes and integration work too.
 | CONTRACT-06 | Shared / blocking | Independent reviewer required explicit identifier associated-data type on encrypt/decrypt | APP + STORE | 0 | Accepted; contract clarified in `c3e7904` |
 | DECISION-01 | PARSE / source fidelity | Rejected sign-normalizing refund original_amount: source plan requires billed/original, not an absolute rate | PARSE | 0 | Source signs preserved |
 | DECISION-02 | STORE / schema fidelity | Rejected partial natural installment unique index: source DDL requires unconditional natural uniqueness | STORE | 0 | Resolve both specified uniqueness conflicts without schema weakening |
+| F1 | APP-FOUNDATION / HIGH | Reviewer found CardHint label can expose last-4; LEAD reproduced accepting synthetic identifier-containing label and repr exposure | APP | 1 | Guard/regressions passed; independent re-review pending |
+| F2 | APP-FOUNDATION / MEDIUM | Reviewer found inconsistent precision boundary; LEAD reproduced excess precision retained in foreign-detail command | APP | 1 | Command-boundary quantization/regressions passed; re-review pending |
+| N1 | APP-FOUNDATION / test validity | Reviewer found domain isolation test imports only empty initializer; LEAD inspected actual test and agreed | APP | 1 | Every concrete domain module now exercised; re-review pending |
+| N2 | APP-FOUNDATION / correctness | Reviewer found stale FX rate accepted; LEAD reproduced billed 12 / original 3 with incorrect rate 3 | APP | 1 | Signed rate consistency and shared helper regressions passed; re-review pending |
+
+Build environment note: `pip wheel --no-build-isolation` initially failed
+because setuptools was not installed in the runtime environment. Standard
+isolated `pip wheel . --no-deps` successfully installed the declared build
+requirements and produced the wheel in session artifacts; no source change
+or additional dependency declaration was needed.
 
 Only foundation tests have run so far. Issuer parsing, PostgreSQL persistence,
 import-service behavior and end-to-end validation are not yet implemented.
