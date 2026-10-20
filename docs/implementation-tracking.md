@@ -309,8 +309,8 @@ Review is independent and applies to fixes and integration work too.
 | PLAN / 1 | `c3e7904` | Documentation diff inspected; staged whitespace check passed | Associated-data, dry-run, reference/NULL and owner-account invariants explicitly settled with independent reviewer |
 | APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
 | APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
-| PARSE / 1 | Pending | Original persistent owner implementing test-first against reviewed `9967f8d` | Disjoint ownership; independent review required on delivery |
-| STORE / 1 | Pending leader commit | Owner RED missing CLI resolver then database modules; owner GREEN 261 storage/contract tests; LEAD GREEN 365 foundation/storage/contract tests on real PostgreSQL | Delivery frozen for independent review; source migration packaging gap and added NULL-bank unique index explicitly reported |
+| PARSE / 1 | Pending leader commit | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Actual four examples reconcile; initial implementation awaiting independent review |
+| STORE / 1 | `71ee0cf` | Owner RED missing CLI resolver then database modules; owner GREEN 261 storage/contract tests; LEAD GREEN 365 foundation/storage/contract tests on real PostgreSQL; scoped ruff and strict mypy nine source files passed | Delivery frozen for independent review; source migration packaging gap and added NULL-bank unique index explicitly reported |
 
 ### Findings ledger
 
@@ -337,5 +337,16 @@ isolated `pip wheel . --no-deps` successfully installed the declared build
 requirements and produced the wheel in session artifacts; no source change
 or additional dependency declaration was needed.
 
-Only foundation tests have run so far. Issuer parsing, PostgreSQL persistence,
-import-service behavior and end-to-end validation are not yet implemented.
+PARSE test-first evidence limitation: the owner reported genuine missing-module
+RED runs for several modules, but used module-removal sensitivity checks for
+registry/row-reader/installment-fields and observed no separate RED for
+default_registry. Those checks are not claimed as genuine test-first history.
+Future corrections must add and run failing regressions against the existing
+implementation before changing it.
+
+The parser's full-suite attempt without BT_TEST_DSN errored on 124 PostgreSQL
+test setups as designed; it is not a storage regression. LEAD reran the whole
+delivered suite with the runtime DSN: 669 passed. Parser golden tests use all
+four unchanged examples and reconcile their stated counts and totals.
+Both adapter scopes await independent review. Import-service behavior and full
+end-to-end application validation have not run.
