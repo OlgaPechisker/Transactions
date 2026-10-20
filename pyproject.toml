@@ -30,7 +30,6 @@ bank_transactions = ["py.typed"]
 "bank_transactions.persistence" = [
     "migrations/*.py",
     "migrations/*.mako",
-    "migrations/*.ini",
     "migrations/versions/*.py",
 ]
 

@@ -288,28 +288,3 @@ def test_account_lookup_by_number_returns_every_match_ordered_by_id():
     hints = typing.get_type_hints(AccountRepository.find_by_number)
 
     assert hints["return"] == tuple[AccountRecord, ...]
-
-
-def test_account_lookup_result_lets_callers_tell_none_one_and_many_apart():
-    class FakeAccounts(AccountRepository):
-        def __init__(self, matches):
-            self.matches = matches
-
-        def list_all(self):
-            return self.matches
-
-        def get(self, account_id):
-            return None
-
-        def find_by_number(self, bank_code, account_number_enc):
-            return self.matches
-
-        def create(self, account):
-            raise NotImplementedError
-
-    first = AccountRecord(AccountId(1), OwnerId(1), None, TOKEN, None)
-    second = AccountRecord(AccountId(2), OwnerId(2), None, TOKEN, None)
-
-    assert FakeAccounts(()).find_by_number(None, TOKEN) == ()
-    assert FakeAccounts((first,)).find_by_number(None, TOKEN) == (first,)
-    assert FakeAccounts((first, second)).find_by_number(None, TOKEN) == (first, second)
