@@ -69,9 +69,9 @@ def test_account_lookup_is_an_exact_ciphertext_pair_match(factory, cipher):
         uow.commit()
 
     with factory.create() as uow:
-        assert uow.accounts.find_by_number("LEUMI", number) == account
-        assert uow.accounts.find_by_number("HAPOALIM", number) is None
-        assert uow.accounts.find_by_number("LEUMI", other_number) is None
+        assert uow.accounts.find_by_number("LEUMI", number) == (account,)
+        assert uow.accounts.find_by_number("HAPOALIM", number) == ()
+        assert uow.accounts.find_by_number("LEUMI", other_number) == ()
         assert uow.accounts.get(account.account_id) == account
         assert uow.accounts.list_all() == (account,)
 
@@ -83,8 +83,8 @@ def test_account_lookup_without_a_bank_code_is_null_safe(factory, cipher):
         unbanked = uow.accounts.create(NewAccount(owner.owner_id, None, number, None))
         banked = uow.accounts.create(NewAccount(owner.owner_id, "LEUMI", number, None))
 
-        assert uow.accounts.find_by_number(None, number) == unbanked
-        assert uow.accounts.find_by_number("LEUMI", number) == banked
+        assert uow.accounts.find_by_number(None, number) == (unbanked,)
+        assert uow.accounts.find_by_number("LEUMI", number) == (banked,)
 
 
 def test_the_same_bank_and_account_number_cannot_be_stored_twice(factory, cipher):
@@ -98,14 +98,29 @@ def test_the_same_bank_and_account_number_cannot_be_stored_twice(factory, cipher
         uow.accounts.create(NewAccount(owner.owner_id, "LEUMI", number, None))
 
 
-def test_a_number_without_a_bank_code_cannot_be_stored_twice(factory, cipher):
+def test_one_number_without_a_bank_code_may_belong_to_several_accounts(factory, cipher):
+    number = cipher.encrypt(IdentifierType.ACCOUNT_NUMBER, "8917221038")
+    with factory.create() as uow:
+        first_owner = uow.owners.create(new_owner("Dana Levi"))
+        second_owner = uow.owners.create(new_owner("Avi Cohen"))
+        first = uow.accounts.create(NewAccount(first_owner.owner_id, None, number, "one"))
+        second = uow.accounts.create(NewAccount(second_owner.owner_id, None, number, "two"))
+        same_owner = uow.accounts.create(NewAccount(first_owner.owner_id, None, number, "three"))
+        uow.commit()
+
+    with factory.create() as uow:
+        assert uow.accounts.find_by_number(None, number) == (first, second, same_owner)
+
+
+def test_lookup_with_a_bank_code_never_returns_accounts_of_unknown_banks(factory, cipher):
     number = cipher.encrypt(IdentifierType.ACCOUNT_NUMBER, "8917221038")
     with factory.create() as uow:
         owner = uow.owners.create(new_owner())
         uow.accounts.create(NewAccount(owner.owner_id, None, number, None))
+        known = uow.accounts.create(NewAccount(owner.owner_id, "LEUMI", number, None))
+        uow.accounts.create(NewAccount(owner.owner_id, "HAPOALIM", number, None))
 
-        with pytest.raises(PersistenceError):
-            uow.accounts.create(NewAccount(owner.owner_id, None, number, None))
+        assert uow.accounts.find_by_number("LEUMI", number) == (known,)
 
 
 def test_accounts_without_a_number_may_repeat(factory):

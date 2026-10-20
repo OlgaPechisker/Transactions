@@ -4,6 +4,8 @@ Revision ID: 0001
 Revises:
 """
 
+from datetime import datetime
+
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import text
@@ -29,11 +31,11 @@ def enum(name: str) -> postgresql.ENUM:
     return postgresql.ENUM(*ENUM_LABELS[name], name=name, create_type=False)
 
 
-def identity_pk() -> sa.Column:
+def identity_pk() -> sa.Column[int]:
     return sa.Column("id", sa.Integer(), sa.Identity(), primary_key=True)
 
 
-def created_at() -> sa.Column:
+def created_at() -> sa.Column[datetime]:
     return sa.Column(
         "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
@@ -66,15 +68,6 @@ def upgrade() -> None:
             "bank_code", "account_number_enc", name="uq_accounts_bank_code_account_number_enc"
         ),
         sa.UniqueConstraint("id", "owner_id", name="uq_accounts_id_owner_id"),
-    )
-    # The pair constraint treats NULL bank codes as distinct, so a number without a bank needs
-    # its own guard to keep lookups unambiguous.
-    op.create_index(
-        "ux_accounts_number_without_bank",
-        "accounts",
-        ["account_number_enc"],
-        unique=True,
-        postgresql_where=text("bank_code IS NULL AND account_number_enc IS NOT NULL"),
     )
 
     op.create_table(

@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 
+from bank_transactions.persistence import db
 from bank_transactions.persistence.db import downgrade_database, upgrade_database
 from bank_transactions.persistence.orm.models import Base
 
@@ -152,6 +155,30 @@ def test_account_ciphertext_pair_is_unique(constraint_definitions):
     assert constraint_definitions["uq_accounts_bank_code_account_number_enc"] == (
         "UNIQUE (bank_code, account_number_enc)"
     )
+
+
+def test_accounts_only_have_the_source_ddl_unique_constraints(index_definitions):
+    account_uniques = {
+        name
+        for name, definition in index_definitions.items()
+        if ".accounts USING" in definition and "UNIQUE" in definition
+    }
+
+    assert account_uniques == {
+        "accounts_pkey",
+        "uq_accounts_bank_code_account_number_enc",
+        "uq_accounts_id_owner_id",
+    }
+
+
+def test_migration_scripts_ship_inside_the_package_only():
+    package_scripts = Path(db.__file__).parent / "migrations"
+    root_scripts = Path(db.__file__).resolve().parents[3] / "alembic"
+
+    assert (package_scripts / "env.py").is_file()
+    assert (package_scripts / "script.py.mako").is_file()
+    assert (package_scripts / "versions" / "0001_initial_schema.py").is_file()
+    assert not root_scripts.exists()
 
 
 def test_a_composite_foreign_key_ties_the_card_owner_to_the_account_owner(constraint_definitions):

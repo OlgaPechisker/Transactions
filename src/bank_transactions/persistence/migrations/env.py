@@ -6,14 +6,14 @@ connection through `config.attributes["connection"]`. The command line passes th
 """
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import Connection, create_engine, pool
 
 from bank_transactions.persistence.orm.models import Base
 
 target_metadata = Base.metadata
 
 
-def _run_with(connection) -> None:
+def _run_with(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
     with context.begin_transaction():
         context.run_migrations()

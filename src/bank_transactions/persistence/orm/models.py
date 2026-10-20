@@ -76,12 +76,6 @@ class AccountRow(Base):
             "bank_code", "account_number_enc", name="uq_accounts_bank_code_account_number_enc"
         ),
         sa.UniqueConstraint("id", "owner_id", name="uq_accounts_id_owner_id"),
-        Index(
-            "ux_accounts_number_without_bank",
-            "account_number_enc",
-            unique=True,
-            postgresql_where=text("bank_code IS NULL AND account_number_enc IS NOT NULL"),
-        ),
     )
 
 

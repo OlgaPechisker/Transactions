@@ -98,7 +98,7 @@ def _run_migration(dsn: str, schema: str | None, action: Callable[[Config], None
 
 
 def _alembic_config(connection: Connection) -> Config:
-    script_directory = Path(__file__).resolve().parents[3] / "alembic"
+    script_directory = Path(__file__).resolve().parent / "migrations"
     if not (script_directory / "env.py").is_file():
         raise PersistenceError("the database migrations are not available in this installation")
     config = Config()

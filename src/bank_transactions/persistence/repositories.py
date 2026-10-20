@@ -211,16 +211,16 @@ class SqlAccountRepository(AccountRepository):
     @translates_database_errors
     def find_by_number(
         self, bank_code: str | None, account_number_enc: IdentifierToken
-    ) -> AccountRecord | None:
-        row = self._session.scalars(
+    ) -> tuple[AccountRecord, ...]:
+        rows = self._session.scalars(
             select(AccountRow)
             .where(
                 AccountRow.bank_code.is_not_distinct_from(bank_code),
                 AccountRow.account_number_enc == bytes(account_number_enc),
             )
             .order_by(AccountRow.id)
-        ).first()
-        return None if row is None else _account_record(row)
+        )
+        return tuple(_account_record(row) for row in rows)
 
     @translates_database_errors
     def create(self, account: NewAccount) -> AccountRecord:
