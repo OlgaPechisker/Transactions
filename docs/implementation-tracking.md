@@ -1,6 +1,78 @@
 # Implementation coordination and evidence
 
-## APP delivery checkpoint and user-requested resumption - 2026-10-20
+## Final acceptance - 2026-10-20
+
+**Implementation, independent scope reviews, integration and original-example
+acceptance are complete.** No implementation finding or integration blocker
+remains open. Historical checkpoint notes below preserve the actual execution
+order and limitations; this section and the updated ledgers are the final state.
+
+- Base `master` remains at authorized baseline `ced9245`; all 17 original
+  baseline files are unchanged.
+- Delivery branch is `implementation/bank-transactions`. Runtime and test
+  acceptance used committed **`4200dee`**. Subsequently reviewed **`8e4d07a`**
+  changes README only; this final ledger commit changes no executable content.
+- The original persistent Sonnet 5.5 / High owners delivered APP, PARSE and
+  STORE. The original independent Opus 5.5 reviewer approved every final scope
+  and correction. Their IDs and boundaries remain in the ownership table;
+  agents are retained and available through the final report.
+- Separate implementation and correction commits, including unsuccessful
+  `02cced5` and `6de265e`, remain preserved. No push, base-branch merge, squash,
+  amendment, reset or history rewriting occurred. All 23 implementation-branch
+  commits preceding this ledger have the required co-author trailer.
+
+The application provides the library and `import` / `detect` / `init-db` CLI,
+three issuer parsers, frozen pure contracts, encrypted identity resolution,
+atomic all-card gating, durable audit, dry-run/rollback, multiset/reference
+deduplication, installments, FX/fee handling, review reasons, totals QA and
+settings/bootstrap wiring. It follows the source sequence and the two
+user-approved reference-key/context-scan decisions.
+
+| Final verification | Actual result |
+| --- | --- |
+| LEAD complete suite, Python 3.14.2 / PostgreSQL 16 | **939 passed in 140.54 seconds**, no skipped PostgreSQL prerequisites |
+| LEAD quality checks | Ruff passes; 129 files formatted; strict mypy passes on 69 source files |
+| Opus APP correction re-review | PASS; 47 affected tests in 7.42 seconds and 315 selected application/integration/contracts/resolver tests in 65 seconds; lint/format/type pass |
+| Fresh wheel and actual installed Windows console outside checkout | **24 expected-exit-code scenarios pass**, including all originals, repeats, both Max overlap orders, physical-card creation, exact non-first-card selection and intentional NEEDS_INPUT cases |
+| Installed migrations | Upgrade/downgrade/re-upgrade and wheel resources pass in the automated suite |
+| Local persistent CLI | Editable installation refreshed after console-script manifest change; `.venv\Scripts\bank-transactions.exe --help` responds |
+| APP4 README-only correction | Independent Opus PASS; no docs tests configured or claimed run |
+
+Original-example SQL results are Isracard four rows (ILS 1337.60 / USD 26.39),
+Max monthly 158 rows (ILS 20839.67), Max yearly 2169 rows (ILS 216563.68),
+and Cal eight imported / 13 pending skips (ILS 645.13). Max monthly then yearly
+adds 2011 rows / 158 duplicates; yearly then monthly adds zero / 158 duplicates.
+Existing provenance is unchanged. Yearly Max retains 607 FX rows, 374
+unknown-currency reasons, 14 refunds and 13 plans / 44 linked charges. Cal
+retains plan total 1680, current charge 336 and installment 4 of 5.
+
+Final installed-console evidence and the wheel are retained in session
+`files/installed-cli-483476fd6f/results.json` and its `wheel/` directory.
+Its two UUID-owned schemas and temporary source/install copies were cleaned.
+The validation container was stopped, not removed; its data/configuration and
+unattributed `bt_store_56c50b8dae65` / `bt_store_56c50b8dae65_b` schemas remain
+preserved.
+No bounded verification helper remains running. Docker Desktop and unrelated
+containers were untouched. A future restart must rediscover the dynamic port.
+
+All accepted findings are resolved. APP-PC-01/02 required one production
+correction; APP-TEST-01 and APP-DOC-01 each required one scoped correction.
+Earlier packaging and corrupt-workbook issues each needed two attempts; no
+issue exhausted three unsuccessful corrections. The previously proposed extra
+NULL-bank uniqueness constraint was rejected against the source schema and
+removed, rather than silently changing the contract.
+
+**Limitations:** original test-first history is incomplete for the explicitly
+listed modules; sensitivity replays are not historical RED. The APP owner
+corrected a failing test SQL query before its checkpoint; LEAD recovered the
+recorded failing queries, replayed them and preserved the unsuccessful state
+separately, not a byte-identical original workspace. The process was therefore
+not fully checkpoint/TDD-compliant despite the final reviewed result. Other
+supported Python/PostgreSQL versions were not exercised. Original exports
+contain no explicit fee rows; those scenarios use synthetic automated tests.
+No deployment or production-database validation is claimed.
+
+## Historical APP delivery checkpoint and resumption - 2026-10-20
 
 The user requested finishing the currently running APP agent task, then stopping
 and recording the resume point. That task finished and its delivery was
@@ -525,6 +597,7 @@ Review is independent and applies to fixes and integration work too.
 | PLAN / 3 | `098bfc8` | Documentation-only adapter approvals, shared validation ownership and test-first evidence limits | APP integration gate recorded open |
 | PLAN / 4 | `930ff65` | Documentation-only final STORE3 approval | All adapter/shared-helper corrections independently approved before APP delivery |
 | PLAN / 5 | `334832a` | Documentation-only APP delivery checkpoint, resumption and test provenance | Original APP review and independent validation resumed |
+| PLAN / 6 | `bf02b07` | Documentation-only independent 933-test/18-console baseline and validated APP findings | Original APP owner assigned corrections |
 | APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
 | APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
 | PARSE / 1 | `f58ac75` | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Opus BLOCK P1/P2; LEAD validated both; real examples independently reconcile |
@@ -539,7 +612,8 @@ Review is independent and applies to fixes and integration work too.
 | STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 focused checks pass; REVIEW 76 selected privacy/resolver tests and full strict mypy 60 source files pass | Opus PASS; CLI and service share pure label validation without behavior or public-contract changes |
 | APP / 1 | `d66a31d` | LEAD and Opus independently reproduce 933 tests, lint/format 129 files and strict mypy 69 source files; LEAD fresh installed-wheel CLI passes 18 console invocations with SQL goldens outside checkout | Opus BLOCK for APP-PC-01/02; both recommendations independently validated by LEAD |
 | APP / 2 | `6de265e` | Owner genuine RED 6 failed / 41 passed; first correction verification 46 passed / 1 failed due to test SQL, independently replayed by LEAD in 6.80 seconds | UNSUCCESSFUL verification state preserved; production fix unchanged, test-only APP3 correction follows |
-| APP / 3 | This SQL-only correction commit | LEAD 47 affected tests pass in 5.84 seconds, full lint/format 129 files and strict mypy 69 source files pass; owner previously reported full 939 pass on the same corrected state | No production change; final full/installed-CLI acceptance and original Opus re-review pending |
+| APP / 3 | `4200dee` | LEAD 939 full tests in 140.54 seconds, full lint/format 129 files and strict mypy 69 source files pass; 24 installed-console cases with SQL assertions pass outside checkout | Opus PASS; 47 affected tests and 315 broader selected tests pass; APP-PC-01/02 and APP-TEST-01 closed |
+| APP / 4 | `8e4d07a` | README only: masked identity-prompt display, complete reference key and self-contained library sample; executable content unchanged | Opus PASS actual diff/code/plan; APP-DOC-01 closed; no docs tests configured or claimed |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
@@ -555,7 +629,7 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 
 | ID | Scope / severity | Evidence and ruling | Owner | Fix attempts | Status |
 | --- | --- | --- | --- | --- | --- |
-| CONTRACT-01 | Shared / correctness | Reference key could collapse installment charges; user approved including installment number | APP + STORE | 0 | Contracts/storage implemented and reviewed; full service/E2E verification pending |
+| CONTRACT-01 | Shared / correctness | Reference key could collapse installment charges; user approved including installment number | APP + STORE | 0 | Implemented, reviewed and verified through final service/integration acceptance |
 | CONTRACT-02 | PARSE / ordering | Max card identities exist only in data column; user approved identity-column-only context scan | PARSE | 0 | Implemented and independently reviewed; no transaction parsing before identity gate |
 | CONTRACT-03 | Shared / dependency | Domain issue objects cannot import services; define in domain, re-export | APP | 0 | Resolved in independently approved foundation |
 | CONTRACT-04 | Shared / data flow | Sequence requires parsed plans; add frozen plans tuple to result | APP | 0 | Resolved in independently approved foundation |
@@ -573,13 +647,14 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 | P2 | PARSE / MEDIUM | Reviewer probed unknown/blank types silently becoming REGULAR; LEAD inspected both Max/Cal mappings and existing incorrect expectation | PARSE | 1 | Resolved; Opus independently verified `db7d58f` |
 | P3 | PARSE / LOW | Foreign-currency installment lacks per-charge original; skip with explicit FX-original error, do not guess by dividing plan total | PARSE | 1 | Resolved; Opus independently verified parser-level regressions in `db7d58f` |
 | P4 / P4a | PARSE / maintainability | Named expected-input catches preserve unexpected-error propagation; corrupt font-size and empty content-types cases required two additional expected exception classes | PARSE | 2 | Resolved; Opus independently verified `bef4e77`, including three genuinely failing regressions before the correction |
-| P5 | PARSE / MEDIUM | LEAD found configurable year window cannot reach hardcoded date normalizer through registry/parser/row reader | PARSE + APP | 1 | Parser propagation independently approved in `78fa38b`; APP settings/bootstrap integration pending |
+| P5 | PARSE / MEDIUM | LEAD found configurable year window cannot reach hardcoded date normalizer through registry/parser/row reader | PARSE + APP | 1 | Parser propagation independently approved in `78fa38b`; APP settings/bootstrap wiring independently approved and tested |
 | A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 1 | Resolved; fresh builds and stale-module regression independently approved in `b0d059b` |
 | A2 | APP-SHARED / LOW | Fake account none/one/many test only returns its configured value | APP + STORE | 1 | Fake removed in `b0d059b`; actual PostgreSQL zero/one/many, ordering and known-bank isolation pass |
 | A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 1 | Unused glob removed in `b0d059b`; single canonical migration implementation preserved |
-| APP-PC-01 | APP / HIGH | Opus actual-service probe binds explicit CreateCard to card 1 of 2 and creates none; LEAD validated `existing[0]` against plan section 6 / diagram's nonunique physical-card and explicit-selection rules | APP | 1 | Production correction delivered in APP2; test SQL follow-up and independent re-review pending |
-| APP-PC-02 | APP / MEDIUM | Opus actual-service probe cannot select a conflicting existing card because `_bind` offers no candidates; LEAD validated required explicit selection against plan section 6 and diagram | APP | 1 | Production correction delivered in APP2; noninteractive behavior retained; independent re-review pending |
-| APP-TEST-01 | APP / test validity | New PostgreSQL regression used `cards.card_id` instead of `id`; LEAD reproduced initial 46/1 failure from exact owner-reported SQL | APP | 1 | APP3 separately preserves owner-authored SQL-only correction; LEAD 47 affected tests pass, independent re-review pending |
+| APP-PC-01 | APP / HIGH | Opus actual-service probe binds explicit CreateCard to card 1 of 2 and creates none; LEAD validated `existing[0]` against plan section 6 / diagram's nonunique physical-card and explicit-selection rules | APP | 1 | Resolved; Opus PASS `4200dee`, LEAD installed-console ambiguity/conflict scenarios bind distinct requested cards |
+| APP-PC-02 | APP / MEDIUM | Opus actual-service probe cannot select a conflicting existing card because `_bind` offers no candidates; LEAD validated required explicit selection against plan section 6 and diagram | APP | 1 | Resolved; Opus PASS, explicit offered-card selection and noninteractive atomicity verified |
+| APP-TEST-01 | APP / test validity | New PostgreSQL regression used `cards.card_id` instead of `id`; LEAD reproduced initial 46/1 failure from exact owner-reported SQL | APP | 1 | Resolved; unsuccessful `6de265e` preserved, SQL-only `4200dee` independently verified and Opus approved |
+| APP-DOC-01 | APP / documentation | README's blanket no-identifiers CLI claim contradicted allowed masked prompts; reference-key prose omitted date and sample imports were missing | APP | 1 | Resolved; original owner correction `8e4d07a`, LEAD validation and Opus PASS against actual code/plan |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
@@ -616,16 +691,11 @@ delivered suite with the runtime DSN: 669 passed. Parser golden tests use all
 four unchanged examples and reconcile their stated counts and totals.
 The adapter reviews and corrections are independently approved: PARSE P1-P5,
 STORE packaging/account lookup and APP's stale-wheel correction are closed.
-The APP adapter integration gate is OPEN. APP iteration 1 has now been delivered
-and preserved at `d66a31d`; its owner reports passing application/PostgreSQL/
-example/in-checkout CLI tests. The shared label helper and its green-preserving
-CLI adoption are independently approved. The user requested a pause after APP
-delivery, then resumed before its documentation checkpoint was committed.
-LEAD full verification and installed-wheel CLI acceptance now pass for the
-initial APP candidate. Independent APP review returned BLOCK for the two
-validated identity findings. The original owner's production correction is
-delivered, with its initially unsuccessful test-query verification preserved
-separately from the SQL-only correction. Independent re-review and final
-acceptance/reporting remain pending.
+The APP adapter integration gate was released before delivery. The user
+requested a pause after APP1, then resumed. APP1's two identity findings are
+corrected in the preserved APP2/3 sequence; final APP4 documentation is
+independently approved. All final scope reviews and acceptance gates pass as
+recorded at the top. Historical unsuccessful verifications and provenance
+limitations remain explicit rather than being rewritten as successes.
 Two old test schemas reported by STORE are preserved because their active-run
 attribution was uncertain; no unattributed schema was dropped.
