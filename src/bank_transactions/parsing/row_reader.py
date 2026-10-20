@@ -46,6 +46,9 @@ class RowReader:
         self._cells = cells
         self._anchor = date_anchor
 
+    def has_column(self, key: str) -> bool:
+        return self._layout.has(key)
+
     def raw(self, key: str) -> CellValue:
         return self._layout.cell(self._cells, key)
 

@@ -380,7 +380,6 @@ def test_transaction_types_map_from_the_source_column(max_workbook, max_row):
         max_row(type="חיוב חודשי"),
         max_row(type="דחוי לחיוב החודשי"),
         max_row(type="חיוב עסקות מיידי"),
-        max_row(type="סוג שלא הכרנו"),
     ]
 
     types = [t.transaction_type for t in read(max_workbook(rows)).transactions]
@@ -390,8 +389,30 @@ def test_transaction_types_map_from_the_source_column(max_workbook, max_row):
         TransactionType.RECURRING,
         TransactionType.RECURRING,
         TransactionType.IMMEDIATE_CHARGE,
-        TransactionType.REGULAR,
     ]
+
+
+def test_an_unknown_or_blank_transaction_type_is_reported_and_the_row_skipped(
+    max_workbook, max_row
+):
+    rows = [max_row(type="סוג שלא הכרנו"), max_row(type=None), max_row(type="  ")]
+
+    result = read(max_workbook(rows))
+
+    assert result.transactions == ()
+    assert [(i.code, i.severity) for i in result.issues] == [
+        (RowIssueCode.MALFORMED_ROW, IssueSeverity.ERROR),
+        (RowIssueCode.MISSING_REQUIRED_VALUE, IssueSeverity.ERROR),
+        (RowIssueCode.MISSING_REQUIRED_VALUE, IssueSeverity.ERROR),
+    ]
+    assert all("הכרנו" not in i.message for i in result.issues)
+    assert "type" in result.issues[0].message
+
+
+def test_a_pending_row_is_pending_even_when_its_type_is_blank(max_workbook, max_row):
+    result = read(max_workbook([max_row(type=None, billing=None)]))
+
+    assert [i.code for i in result.issues] == [RowIssueCode.PENDING_TRANSACTION]
 
 
 def test_unmapped_and_blank_channels_are_unknown(max_workbook, max_row):
@@ -671,6 +692,37 @@ def test_an_installment_row_without_a_usable_note_is_charged_but_ambiguous(max_w
     assert all(ReviewReason.AMBIGUOUS_INSTALLMENT in t.review_reasons for t in result.transactions)
     assert result.installment_plans == ()
     assert totals(result.calculated_totals) == {"ILS": Decimal("600")}
+
+
+def test_an_installment_row_with_a_bad_note_keeps_the_monthly_charge_as_original(
+    max_workbook, max_row
+):
+    row = max_row(type="תשלומים", original=1200, billing=300, notes="ללא פירוט")
+
+    (transaction,) = read(max_workbook([row])).transactions
+
+    assert transaction.installment is None
+    assert transaction.original == Money(Decimal("300"), ILS)
+    assert transaction.billing == Money(Decimal("300"), ILS)
+
+
+@pytest.mark.parametrize("note", ["תשלום 1 מתוך 3", "ללא פירוט"])
+@pytest.mark.parametrize("sheet", ["domestic", "foreign"])
+def test_an_installment_in_another_currency_has_no_per_charge_original_so_it_is_rejected(
+    max_workbook, max_row, note, sheet
+):
+    row = max_row(
+        type="תשלומים", original=90, original_currency="$", billing=100, notes=note, rate=" 3.5"
+    )
+    workbook = max_workbook(**{sheet: [row]})
+
+    result = read(workbook)
+
+    assert result.transactions == ()
+    assert [(i.code, i.severity) for i in result.issues] == [
+        (RowIssueCode.MISSING_OR_ZERO_FX_ORIGINAL_AMOUNT, IssueSeverity.ERROR)
+    ]
+    assert result.installment_plans == ()
 
 
 def test_cards_never_share_a_plan(max_workbook, max_row):

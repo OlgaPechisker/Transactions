@@ -1,18 +1,33 @@
 """openpyxl adapter: reads a whole workbook eagerly into plain immutable views."""
 
 import warnings
+import zipfile
+import zlib
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, BinaryIO
+from xml.etree import ElementTree
 
 import openpyxl  # type: ignore[import-untyped]
+from openpyxl.utils.exceptions import InvalidFileException  # type: ignore[import-untyped]
 
 from bank_transactions.domain.errors import ParseError
 from bank_transactions.domain.workbook import CellValue, Row, SheetView, WorkbookView
 from bank_transactions.ports.workbook_reader import WorkbookReader
 
 _PLAIN_CELL_TYPES = (str, int, float, Decimal, bool, datetime, date)
+# What openpyxl raises for damaged input: a bad or truncated archive, a missing package part
+# (KeyError), malformed XML, unparsable cell content (ValueError) or a rejected file type.
+# Anything else is a defect or a resource failure and must propagate.
+_BAD_INPUT_ERRORS = (
+    zipfile.BadZipFile,
+    zlib.error,
+    ElementTree.ParseError,
+    InvalidFileException,
+    KeyError,
+    ValueError,
+)
 
 
 class ExcelWorkbookReader(WorkbookReader):
@@ -43,7 +58,7 @@ class ExcelWorkbookReader(WorkbookReader):
                     category=UserWarning,
                 )
                 return openpyxl.load_workbook(stream, data_only=True)
-        except Exception:  # openpyxl raises many unrelated types for corrupt input
+        except _BAD_INPUT_ERRORS:
             raise ParseError("the file is not a readable Excel workbook") from None
 
     @staticmethod

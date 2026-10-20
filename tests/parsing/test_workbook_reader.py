@@ -1,5 +1,6 @@
 import io
 import warnings
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +68,39 @@ def test_bytes_that_are_not_a_workbook_raise_a_sanitised_parse_error():
         ExcelWorkbookReader().read_stream(io.BytesIO(b"definitely not a workbook"))
 
     assert "definitely" not in str(raised.value)
+
+
+def test_corrupt_archives_and_corrupt_xml_parts_raise_a_sanitised_parse_error():
+    def build(book):
+        book.active.append(["secret-1234"])
+
+    good = workbook_stream(build).getvalue()
+    damaged = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(good)) as source, zipfile.ZipFile(damaged, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            target.writestr(
+                item, b"<broken" if item.filename.startswith("xl/worksheets/") else data
+            )
+    damaged.seek(0)
+
+    with pytest.raises(ParseError) as xml_error:
+        ExcelWorkbookReader().read_stream(damaged)
+    with pytest.raises(ParseError) as zip_error:
+        ExcelWorkbookReader().read_stream(io.BytesIO(good[: len(good) // 2]))
+
+    assert "1234" not in str(xml_error.value) + str(zip_error.value)
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("bug"), MemoryError()])
+def test_unexpected_failures_are_not_reported_as_bad_input(monkeypatch, failure):
+    def explode(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr("bank_transactions.parsing.workbook.openpyxl.load_workbook", explode)
+
+    with pytest.raises(type(failure)):
+        ExcelWorkbookReader().read_stream(io.BytesIO(b"x"))
 
 
 def test_missing_and_non_workbook_paths_raise_parse_error_without_the_path():

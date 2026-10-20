@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from bank_transactions.domain.enums import IssuerCode, ReviewReason, TransactionType
+from bank_transactions.domain.enums import IssuerCode, ReviewReason, RowIssueCode, TransactionType
 from bank_transactions.domain.errors import ParseError
 from bank_transactions.domain.models import (
     AccountHint,
@@ -27,7 +27,7 @@ from bank_transactions.parsing.column_map import ColumnMap, ColumnSpec
 from bank_transactions.parsing.header_locator import HeaderLocator
 from bank_transactions.parsing.normalizers.amounts import parse_money_text
 from bank_transactions.parsing.normalizers.text import cell_text, strip_bidi_marks
-from bank_transactions.parsing.row_reader import PendingRow
+from bank_transactions.parsing.row_reader import PendingRow, RowReader, RowRejected
 from bank_transactions.parsing.shared.draft import TransactionDraft
 from bank_transactions.parsing.shared.installment_fields import read_installment_fields
 
@@ -124,7 +124,7 @@ class CalParser(TabularStatementParser):
         source_amount = reader.amount("amount")
         original = None if source_amount is None else Money(source_amount, currency)
         notes = reader.text("notes")
-        transaction_type = _TYPES.get(fold_text(reader.text("type") or ""), TransactionType.REGULAR)
+        transaction_type = _transaction_type(reader)
         installment: ParsedInstallmentRef | None = None
         reasons: frozenset[ReviewReason] = frozenset()
         if transaction_type is TransactionType.INSTALLMENTS:
@@ -144,6 +144,15 @@ class CalParser(TabularStatementParser):
             installment=installment,
             review_reasons=reasons,
         )
+
+
+def _transaction_type(reader: RowReader) -> TransactionType:
+    if not reader.has_column("type"):
+        return TransactionType.REGULAR
+    known = _TYPES.get(fold_text(reader.required_text("type")))
+    if known is None:
+        raise RowRejected(RowIssueCode.MALFORMED_ROW, "column 'type' holds an unknown value")
+    return known
 
 
 def _first_sheet(wb: WorkbookView) -> SheetView:

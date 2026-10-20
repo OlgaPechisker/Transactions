@@ -28,12 +28,34 @@ def test_the_note_may_sit_inside_longer_text():
 
 
 @pytest.mark.parametrize("note", [None, "", "ללא פירוט", "תשלום 6 מתוך 5", "תשלום 0 מתוך 5"])
-def test_an_unusable_note_leaves_the_charge_ambiguous_without_inventing_a_plan(note):
+def test_an_unusable_note_leaves_the_charge_ambiguous_and_the_original_the_monthly_charge(note):
     fields = read_installment_fields(note, ils("1680"), ils("336"))
 
     assert fields.ref is None
-    assert fields.original == ils("1680")
+    assert fields.original == ils("336")
     assert fields.review_reasons == {ReviewReason.AMBIGUOUS_INSTALLMENT}
+
+
+def test_an_unusable_note_without_a_source_amount_has_no_original():
+    fields = read_installment_fields("ללא פירוט", None, ils("336"))
+
+    assert fields.ref is None
+    assert fields.original is None
+    assert fields.review_reasons == {ReviewReason.AMBIGUOUS_INSTALLMENT}
+
+
+def test_an_unusable_note_in_another_currency_does_not_guess_the_original():
+    fields = read_installment_fields("ללא פירוט", Money(Decimal("90"), USD), ils("100"))
+
+    assert fields.ref is None
+    assert fields.original is None
+    assert fields.review_reasons == {ReviewReason.AMBIGUOUS_INSTALLMENT}
+
+
+def test_an_unusable_note_with_an_unknown_source_currency_keeps_it_unknown():
+    fields = read_installment_fields("ללא פירוט", Money(Decimal("90"), None), ils("30"))
+
+    assert fields.original == Money(Decimal("30"), None)
 
 
 def test_the_foreign_currency_plan_keeps_the_currency_of_the_source_amount():

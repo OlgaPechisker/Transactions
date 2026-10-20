@@ -136,12 +136,45 @@ def test_category_and_notes_are_kept_as_the_source_wrote_them(cal_workbook, cal_
     assert transaction.notes == "הערה  חופשית"
 
 
-def test_transaction_types_map_and_unknown_types_stay_regular(cal_workbook, cal_row):
-    rows = [cal_row(type="רגילה"), cal_row(type="סוג חדש"), cal_row(type=None)]
+def test_transaction_types_map_and_an_absent_type_column_means_regular(cal_workbook, cal_row):
+    typed = cal_workbook([cal_row(type="רגילה")])
+    sheet = typed.sheets[0]
+    cut = lambda row: row[:4] + row[5:]  # noqa: E731 - drops the type column
+    without_type = WorkbookView(
+        (
+            SheetView(
+                sheet.name,
+                (*sheet.rows[:3], *(cut(row) for row in sheet.rows[3:5]), *sheet.rows[5:]),
+            ),
+        )
+    )
 
-    types = [t.transaction_type for t in read(cal_workbook(rows)).transactions]
+    (transaction,) = read(without_type).transactions
 
-    assert types == [TransactionType.REGULAR] * 3
+    assert transaction.transaction_type is TransactionType.REGULAR
+    assert read(typed).transactions[0].transaction_type is TransactionType.REGULAR
+
+
+def test_an_unknown_or_blank_type_in_a_present_column_is_reported_and_the_row_skipped(
+    cal_workbook, cal_row
+):
+    rows = [cal_row(type="סוג חדש"), cal_row(type=None), cal_row(type="תשלומים", notes="x")]
+
+    result = read(cal_workbook(rows))
+
+    assert [(i.code, i.severity) for i in result.issues[:2]] == [
+        (RowIssueCode.MALFORMED_ROW, IssueSeverity.ERROR),
+        (RowIssueCode.MISSING_REQUIRED_VALUE, IssueSeverity.ERROR),
+    ]
+    assert all("חדש" not in i.message for i in result.issues)
+    assert len(result.transactions) == 1
+    assert result.transactions[0].transaction_type is TransactionType.INSTALLMENTS
+
+
+def test_a_pending_cal_row_is_pending_even_when_its_type_is_blank(cal_workbook, cal_row):
+    result = read(cal_workbook([cal_row(type=None, charge=None)]))
+
+    assert [i.code for i in result.issues] == [RowIssueCode.PENDING_TRANSACTION]
 
 
 def test_a_blank_charge_amount_is_pending_even_with_a_charge_date_banner(cal_workbook, cal_row):

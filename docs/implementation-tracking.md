@@ -118,6 +118,12 @@ Other contract clarifications, derived from the stated invariants:
   There is one migration implementation, not duplicated source/package copies.
   SQLAlchemy minimum is 2.0.16, where `postgresql_nulls_not_distinct` was added
   (upstream tagged changelog, section 2.0.16, ticket 8240).
+- The configurable two-digit-year window must reach the actual normalizers,
+  not remain an unused setting. The additive parser/registry keyword is
+  `two_digit_years_back=80`, validated from 0 through 99, defining the
+  hundred-year interval `[anchor-back, anchor+99-back]`. Statement-derived
+  anchors retain priority over today's date. APP owns settings/bootstrap;
+  PARSE owns propagation through the registry, parsers and row readers.
 
 ## Agent capabilities and ownership
 
@@ -155,8 +161,13 @@ committed. Each scope must report its exact changed-file list.
    only after the reviewed foundation is committed. They may read, not edit,
    each other's files. Each iteration is frozen, reviewed, verified, and
    centrally committed separately. No uncommitted iteration may be overwritten.
-4. **APP**: original APP owner implements the import flow against reviewed
-   adapters. Bootstrap is the only composition root. Review and commit.
+4. **APP**: original APP owner implements the import flow against stable
+   contracts. Scheduling refinement after the initial adapter reviews:
+   service/unit work may proceed alongside bounded adapter corrections because
+   those corrections do not change the frozen import/identity interfaces.
+   Bootstrap integration additionally awaits the additive year-window option.
+   Final integration remains blocked until all adapter corrections pass
+   independent review. Bootstrap is the only composition root. Review and commit.
 5. **INTEGRATION**: test all components together and the actual example files.
    Route corrections to original owners, independently review, commit each
    correction separately, and rerun the relevant checks.
@@ -324,7 +335,8 @@ Review is independent and applies to fixes and integration work too.
 | APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
 | PARSE / 1 | `f58ac75` | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Opus BLOCK P1/P2; LEAD validated both; real examples independently reconcile |
 | STORE / 1 | `71ee0cf` | Owner RED missing CLI resolver then database modules; owner GREEN 261 storage/contract tests; LEAD GREEN 365 foundation/storage/contract tests on real PostgreSQL; scoped ruff and strict mypy nine source files passed | Delivery frozen for independent review; source migration packaging gap and added NULL-bank unique index explicitly reported |
-| APP-SHARED / 1 | Pending leader commit | Owner and LEAD: 83 contract tests pass, one wheel-resource test FAILS; full strict mypy FAILS on pending STORE optional-return adapter | Unsuccessful standalone verification explicitly preserved; coordinated STORE adapter/resource correction is next, no success claimed |
+| APP-SHARED / 1 | `02cced5` | Owner, LEAD and REVIEW: 83 contract tests pass, one wheel-resource test FAILS; full strict mypy FAILS on pending STORE optional-return adapter | Opus contract PASS, integration pending; unsuccessful standalone verification explicitly preserved, no overall success claimed |
+| PARSE / 2 | Pending leader commit | Fix attempt 1 for P1-P4: owner true RED 14 failures / 305 passes before correction; owner and LEAD GREEN 423 parsing/domain tests, scoped ruff/format and strict mypy 24 source files | All original examples unchanged; correction frozen for independent Opus re-review |
 
 ### Findings ledger
 
@@ -344,10 +356,14 @@ Review is independent and applies to fixes and integration work too.
 | N2 | APP-FOUNDATION / correctness | Reviewer found stale FX rate accepted; LEAD reproduced billed 12 / original 3 with incorrect rate 3 | APP | 1 | Resolved; Opus verified signed consistency and shared helper regressions |
 | STORE-PARENT-01 | STORE / schema scope | Owner added a NULL-bank account-number unique index despite prior ruling; reviewer recommended accepting it, LEAD rejected that recommendation because unknown-bank identity is ambiguous and source DDL is explicit | STORE + APP | 0 | Remove index, expose all account candidates, then prompt on ambiguity; coordinated correction pending |
 | PACKAGE-01 / S1 | Cross-scope / HIGH | Root Alembic scripts omitted from wheel; installed init-db cannot locate migrations; LEAD reproduced missing resources in built wheel | STORE + APP | 1 | First APP packaging substage still fails until canonical files move; next correction must include installed-wheel PostgreSQL verification |
-| P1 | PARSE / MEDIUM | Reviewer and LEAD reproduced unusable installment note retaining plan total as original current-charge amount; existing test asserted wrong value | PARSE | 0 | Accepted; actual failing regression required before correction |
-| P2 | PARSE / MEDIUM | Reviewer probed unknown/blank types silently becoming REGULAR; LEAD inspected both Max/Cal mappings and existing incorrect expectation | PARSE | 0 | Accepted; error issues for unknown/blank charged-row type, optional absent Cal column exception |
-| P3 | PARSE / LOW | Foreign-currency installment lacks per-charge original; skip with explicit FX-original error, do not guess by dividing plan total | PARSE | 0 | Accept visible rejection; add parser-level test |
-| P4 | PARSE / maintainability | Reviewer accepted broad Exception around workbook load; LEAD rejected that recommendation: unexpected programming/resource errors must not be mislabeled as corrupt workbooks | PARSE | 0 | Narrow expected archive/XML/input exceptions; propagate unexpected errors, retain safe ParseError for corrupt input |
+| P1 | PARSE / MEDIUM | Reviewer and LEAD reproduced unusable installment note retaining plan total as original current-charge amount; existing test asserted wrong value | PARSE | 1 | Current-charge fallback verified; independent re-review pending |
+| P2 | PARSE / MEDIUM | Reviewer probed unknown/blank types silently becoming REGULAR; LEAD inspected both Max/Cal mappings and existing incorrect expectation | PARSE | 1 | Error issues and optional absent Cal column exception verified; independent re-review pending |
+| P3 | PARSE / LOW | Foreign-currency installment lacks per-charge original; skip with explicit FX-original error, do not guess by dividing plan total | PARSE | 1 | Parser-level visible rejection regressions pass; independent re-review pending |
+| P4 | PARSE / maintainability | Reviewer accepted broad Exception around workbook load; LEAD rejected that recommendation: unexpected programming/resource errors must not be mislabeled as corrupt workbooks | PARSE | 1 | Named expected-input catches and unexpected-error propagation verified; independent re-review pending |
+| P5 | PARSE / MEDIUM | LEAD found configurable year window cannot reach hardcoded date normalizer through registry/parser/row reader | PARSE + APP | 0 | Separate PARSE iteration 3 queued after iteration 2 commit; additive keyword and defaults agreed with APP |
+| A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 0 | Fresh temporary source-copy builds required; APP fixes its fixture separately, STORE isolates installed-wheel acceptance |
+| A2 | APP-SHARED / LOW | Fake account none/one/many test only returns its configured value | APP + STORE | 0 | Remove vacuous fake once STORE supplies actual PostgreSQL zero/one/many and known-bank isolation coverage |
+| A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 0 | Remove unused glob; no additional packaged ini or duplicate migration implementation |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
@@ -366,5 +382,10 @@ The parser's full-suite attempt without BT_TEST_DSN errored on 124 PostgreSQL
 test setups as designed; it is not a storage regression. LEAD reran the whole
 delivered suite with the runtime DSN: 669 passed. Parser golden tests use all
 four unchanged examples and reconcile their stated counts and totals.
-Both adapter scopes await independent review. Import-service behavior and full
-end-to-end application validation have not run.
+The initial adapter reviews are complete: PARSE required corrections and STORE
+source logic passed with packaging/schema corrections still required. PARSE's
+first correction is locally green and awaits independent re-review. STORE's
+resource/lookup correction is in progress. APP prioritizes the shared wheel-test
+isolation correction before proceeding with service/config/bootstrap/CLI work
+against stable contracts. Import-service behavior and full end-to-end application
+validation have not run.

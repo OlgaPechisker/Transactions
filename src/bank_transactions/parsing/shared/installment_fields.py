@@ -20,19 +20,25 @@ def read_installment_fields(
     note: str | None, source_amount: Money | None, billing: Money
 ) -> InstallmentFields:
     """`source_amount` is the issuer's transaction amount, which for installments is the whole
-    purchase. The row's `original` becomes the monthly charge expressed in that currency, so the
-    plan total is kept separately on the reference. An unusable note gives no reference, keeps
-    the source amount as original and flags the row AMBIGUOUS_INSTALLMENT."""
+    purchase. The row's `original` is always the current charge: the billed amount expressed in
+    the source currency, or None when there is no source amount or its currency conflicts with
+    the billing one. The plan total is kept only on the reference. An unusable note gives no
+    reference and flags the row AMBIGUOUS_INSTALLMENT."""
     ambiguous = frozenset({ReviewReason.AMBIGUOUS_INSTALLMENT})
+    original = _current_charge(source_amount, billing)
     position = parse_installment_note(note)
     if position is None or not 1 <= position[0] <= position[1]:
-        return InstallmentFields(None, source_amount, ambiguous)
+        return InstallmentFields(None, original, ambiguous)
     ref = ParsedInstallmentRef(position[0], position[1], plan_total=source_amount)
-    if source_amount is None:
-        return InstallmentFields(ref, None, frozenset())
-    if _currencies_conflict(source_amount, billing):
+    if source_amount is not None and original is None:
         return InstallmentFields(ref, None, ambiguous)
-    return InstallmentFields(ref, Money(billing.amount, source_amount.currency), frozenset())
+    return InstallmentFields(ref, original, frozenset())
+
+
+def _current_charge(source_amount: Money | None, billing: Money) -> Money | None:
+    if source_amount is None or _currencies_conflict(source_amount, billing):
+        return None
+    return Money(billing.amount, source_amount.currency)
 
 
 def _currencies_conflict(source_amount: Money, billing: Money) -> bool:

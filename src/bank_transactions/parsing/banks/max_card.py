@@ -39,7 +39,7 @@ from bank_transactions.parsing.normalizers.text import (
     normalize_last4,
     strip_bidi_marks,
 )
-from bank_transactions.parsing.row_reader import PendingRow, RowRejected
+from bank_transactions.parsing.row_reader import PendingRow, RowReader, RowRejected
 from bank_transactions.parsing.shared.draft import TransactionDraft
 from bank_transactions.parsing.shared.fx_calculator import currencies_differ
 from bank_transactions.parsing.shared.installment_fields import read_installment_fields
@@ -166,7 +166,7 @@ class MaxParser(TabularStatementParser):
         source_amount = reader.amount("original")
         original = None if source_amount is None else Money(source_amount, original_currency)
         note = reader.text("notes")
-        transaction_type = _TYPES.get(fold_text(reader.text("type") or ""), TransactionType.REGULAR)
+        transaction_type = _transaction_type(reader)
         installment: ParsedInstallmentRef | None = None
         reasons: frozenset[ReviewReason] = frozenset()
         if transaction_type is TransactionType.INSTALLMENTS:
@@ -189,6 +189,14 @@ class MaxParser(TabularStatementParser):
             installment=installment,
             review_reasons=reasons,
         )
+
+
+def _transaction_type(reader: RowReader) -> TransactionType:
+    label = reader.required_text("type")
+    known = _TYPES.get(fold_text(label))
+    if known is None:
+        raise RowRejected(RowIssueCode.MALFORMED_ROW, "column 'type' holds an unknown value")
+    return known
 
 
 def _find_sheet(wb: WorkbookView, kind: _SheetKind) -> _FoundSheet | None:
