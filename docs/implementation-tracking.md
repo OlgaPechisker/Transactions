@@ -348,7 +348,7 @@ Review is independent and applies to fixes and integration work too.
 | PARSE / 3 | `78fa38b` | P5 true RED 19 failures / 321 passes; GREEN 444 parsing/domain tests; all three parser/registry window scenarios and unchanged example goldens pass | Opus PASS; P5 attempt 1 resolved, APP settings/bootstrap wiring remains part of APP scope |
 | PARSE / 4 | `bef4e77` | P4 attempt 2: owner genuine RED three failures / 11 passes, GREEN 14 workbook tests and 448 parsing/domain tests; REVIEW independently reproduced both RED and GREEN on the commit snapshot; LEAD scoped lint/format/type checks pass | Opus PASS; original P4 closed without resetting the counter |
 | APP-SHARED / 3 | `f63f9df` | Owner and LEAD 52 text/import-graph tests pass; REVIEW 115 domain tests and scoped lint/format/type/purity checks pass | Opus PASS; original test-first RED not captured, reconstructed RED explicitly excluded from evidence |
-| STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 resolver/noninteractive/text/import-graph tests and scoped lint/format/type checks pass | CLI guard delegates to the shared domain helper; independent Opus review pending |
+| STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 focused checks pass; REVIEW 76 selected privacy/resolver tests and full strict mypy 60 source files pass | Opus PASS; CLI and service share pure label validation without behavior or public-contract changes |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
@@ -414,8 +414,8 @@ The adapter reviews and corrections are independently approved: PARSE P1-P5,
 STORE packaging/account lookup and APP's stale-wheel correction are closed.
 The APP adapter integration gate is OPEN. The original APP owner continues
 service/config/bootstrap/CLI implementation and may run real PostgreSQL vertical
-tests when ready. The shared label helper is independently approved; its
-green-preserving CLI adoption is separately committed and awaits review. Full
-application/end-to-end validation has not run.
+tests when ready. The shared label helper and its green-preserving CLI adoption
+are both independently approved. Full application/end-to-end validation has not
+run.
 Two old test schemas reported by STORE are preserved because their active-run
 attribution was uncertain; no unattributed schema was dropped.
