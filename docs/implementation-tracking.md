@@ -124,6 +124,12 @@ Other contract clarifications, derived from the stated invariants:
   hundred-year interval `[anchor-back, anchor+99-back]`. Statement-derived
   anchors retain priority over today's date. APP owns settings/bootstrap;
   PARSE owns propagation through the registry, parsers and row readers.
+- Identity label validation reuses the pure
+  `domain.text.contains_identifier(text, identifiers)` helper. It extracts
+  the existing CLI guard algorithm, including separator handling, so service
+  validation does not import a concrete resolver or duplicate its logic.
+  Ordinary merchant text and source notes are not redacted. APP owns the shared
+  helper; STORE owns the CLI adapter's green-preserving adoption.
 
 ## Agent capabilities and ownership
 
@@ -337,9 +343,12 @@ Review is independent and applies to fixes and integration work too.
 | STORE / 1 | `71ee0cf` | Owner RED missing CLI resolver then database modules; owner GREEN 261 storage/contract tests; LEAD GREEN 365 foundation/storage/contract tests on real PostgreSQL; scoped ruff and strict mypy nine source files passed | Delivery frozen for independent review; source migration packaging gap and added NULL-bank unique index explicitly reported |
 | APP-SHARED / 1 | `02cced5` | Owner, LEAD and REVIEW: 83 contract tests pass, one wheel-resource test FAILS; full strict mypy FAILS on pending STORE optional-return adapter | Opus contract PASS, integration pending; unsuccessful standalone verification explicitly preserved, no overall success claimed |
 | PARSE / 2 | `db7d58f` | Fix attempt 1 for P1-P4: owner true RED 14 failures / 305 passes before correction; owner, LEAD and REVIEW GREEN 423 parsing/domain tests, scoped lint/type checks | Opus PASS P1-P3; P4 narrowed catch correct, additional corrupt-input coverage accepted as follow-up under the same P4 counter |
-| STORE / 2 | `f127a8a` | Owner RED seven failures / 34 passes; GREEN 271 storage/contracts tests, including installed-wheel PostgreSQL upgrade/downgrade/re-upgrade; LEAD combined suite 715 passed | Account/index correction attempt 1 and packaging correction attempt 2; independent Opus re-review pending |
-| APP-SHARED / 2 | `b0d059b` | A1 stale-module regression genuinely RED before correction, 84 contract tests GREEN; fresh temporary source-copy wheel builds; A2 replaced by real PostgreSQL coverage | A1 correction attempt 1; independent Opus review pending; unused ini glob removed |
-| PARSE / 3 | `78fa38b` | P5 true RED 19 failures / 321 passes; GREEN 444 parsing/domain tests; all three parser/registry window scenarios and unchanged example goldens pass | P5 correction attempt 1; independent Opus review pending |
+| STORE / 2 | `f127a8a` | Owner RED seven failures / 34 passes; GREEN 271 storage/contracts tests, including installed-wheel PostgreSQL upgrade/downgrade/re-upgrade; LEAD and REVIEW combined suite 715 passed | Opus PASS; account/index correction attempt 1 and packaging correction attempt 2 resolved |
+| APP-SHARED / 2 | `b0d059b` | A1 stale-module regression genuinely RED before correction, 84 contract tests GREEN; fresh temporary source-copy wheel builds; A2 replaced by real PostgreSQL coverage | Opus PASS; A1 attempt 1 resolved, unused ini glob removed |
+| PARSE / 3 | `78fa38b` | P5 true RED 19 failures / 321 passes; GREEN 444 parsing/domain tests; all three parser/registry window scenarios and unchanged example goldens pass | Opus PASS; P5 attempt 1 resolved, APP settings/bootstrap wiring remains part of APP scope |
+| PARSE / 4 | `bef4e77` | P4 attempt 2: owner genuine RED three failures / 11 passes, GREEN 14 workbook tests and 448 parsing/domain tests; REVIEW independently reproduced both RED and GREEN on the commit snapshot; LEAD scoped lint/format/type checks pass | Opus PASS; original P4 closed without resetting the counter |
+| APP-SHARED / 3 | `f63f9df` | Owner and LEAD 52 text/import-graph tests pass; REVIEW 115 domain tests and scoped lint/format/type/purity checks pass | Opus PASS; original test-first RED not captured, reconstructed RED explicitly excluded from evidence |
+| STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 resolver/noninteractive/text/import-graph tests and scoped lint/format/type checks pass | CLI guard delegates to the shared domain helper; independent Opus review pending |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
@@ -366,14 +375,14 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 | F2 | APP-FOUNDATION / MEDIUM | Reviewer found inconsistent precision boundary; LEAD reproduced excess precision retained in foreign-detail command | APP | 1 | Resolved; Opus verified command quantization and parsed precision in `9967f8d` |
 | N1 | APP-FOUNDATION / test validity | Reviewer found domain isolation test imports only empty initializer; LEAD inspected actual test and agreed | APP | 1 | Resolved; Opus verified every concrete domain module is exercised |
 | N2 | APP-FOUNDATION / correctness | Reviewer found stale FX rate accepted; LEAD reproduced billed 12 / original 3 with incorrect rate 3 | APP | 1 | Resolved; Opus verified signed consistency and shared helper regressions |
-| STORE-PARENT-01 | STORE / schema scope | Owner added a NULL-bank account-number unique index despite prior ruling; reviewer recommended accepting it, LEAD rejected that recommendation because unknown-bank identity is ambiguous and source DDL is explicit | STORE + APP | 1 | Extra index removed and tuple lookup/real PostgreSQL zero-one-many coverage verified in `f127a8a`; re-review pending |
-| PACKAGE-01 / S1 | Cross-scope / HIGH | Root Alembic scripts omitted from wheel; installed init-db cannot locate migrations; LEAD reproduced missing resources in built wheel | STORE + APP | 2 | Attempt 1 unsuccessful in `02cced5`; attempt 2 passes real installed-wheel PostgreSQL round-trips in `f127a8a`; re-review pending |
+| STORE-PARENT-01 | STORE / schema scope | Owner added a NULL-bank account-number unique index despite prior ruling; reviewer recommended accepting it, LEAD rejected that recommendation because unknown-bank identity is ambiguous and source DDL is explicit | STORE + APP | 1 | Resolved; extra index removed and all-candidate lookup independently approved in `f127a8a` |
+| PACKAGE-01 / S1 | Cross-scope / HIGH | Root Alembic scripts omitted from wheel; installed init-db cannot locate migrations; LEAD reproduced missing resources in built wheel | STORE + APP | 2 | Resolved; attempt 1 unsuccessful in `02cced5`, attempt 2 independently approved with actual installed-wheel PostgreSQL round-trips in `f127a8a` |
 | P1 | PARSE / MEDIUM | Reviewer and LEAD reproduced unusable installment note retaining plan total as original current-charge amount; existing test asserted wrong value | PARSE | 1 | Resolved; Opus independently verified `db7d58f` |
 | P2 | PARSE / MEDIUM | Reviewer probed unknown/blank types silently becoming REGULAR; LEAD inspected both Max/Cal mappings and existing incorrect expectation | PARSE | 1 | Resolved; Opus independently verified `db7d58f` |
 | P3 | PARSE / LOW | Foreign-currency installment lacks per-charge original; skip with explicit FX-original error, do not guess by dividing plan total | PARSE | 1 | Resolved; Opus independently verified parser-level regressions in `db7d58f` |
-| P4 / P4a | PARSE / maintainability | Named expected-input catches preserve unexpected-error propagation, but reviewer and LEAD reproduced corrupt font-size TypeError and empty content-types OSError escaping read_stream | PARSE | 1 | Remaining coverage correction assigned as PARSE iteration 4, next attempt 2 under the original P4 counter, not a reset/new issue |
-| P5 | PARSE / MEDIUM | LEAD found configurable year window cannot reach hardcoded date normalizer through registry/parser/row reader | PARSE + APP | 1 | Additive option fully propagated in `78fa38b`, component tests pass; Opus review and APP settings/bootstrap integration pending |
-| A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 1 | Fresh source-copy build and genuine stale-module regression pass in `b0d059b`; STORE installed-wheel acceptance also isolates builds; re-review pending |
+| P4 / P4a | PARSE / maintainability | Named expected-input catches preserve unexpected-error propagation; corrupt font-size and empty content-types cases required two additional expected exception classes | PARSE | 2 | Resolved; Opus independently verified `bef4e77`, including three genuinely failing regressions before the correction |
+| P5 | PARSE / MEDIUM | LEAD found configurable year window cannot reach hardcoded date normalizer through registry/parser/row reader | PARSE + APP | 1 | Parser propagation independently approved in `78fa38b`; APP settings/bootstrap integration pending |
+| A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 1 | Resolved; fresh builds and stale-module regression independently approved in `b0d059b` |
 | A2 | APP-SHARED / LOW | Fake account none/one/many test only returns its configured value | APP + STORE | 1 | Fake removed in `b0d059b`; actual PostgreSQL zero/one/many, ordering and known-bank isolation pass |
 | A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 1 | Unused glob removed in `b0d059b`; single canonical migration implementation preserved |
 
@@ -390,16 +399,23 @@ default_registry. Those checks are not claimed as genuine test-first history.
 Future corrections must add and run failing regressions against the existing
 implementation before changing it.
 
+APP-SHARED iteration 3 has a separate test-first provenance limitation: the owner
+did not capture RED before writing the eight-line helper. Renaming it afterwards
+produced an ImportError but is a reconstruction, not genuine TDD evidence. The
+commit and this ledger explicitly preserve that limitation. Functional tests and
+import isolation pass; all remaining new APP components were instructed to run
+their actual failing tests before implementation, without manufactured RED.
+
 The parser's full-suite attempt without BT_TEST_DSN errored on 124 PostgreSQL
 test setups as designed; it is not a storage regression. LEAD reran the whole
 delivered suite with the runtime DSN: 669 passed. Parser golden tests use all
 four unchanged examples and reconcile their stated counts and totals.
-The initial adapter reviews are complete. PARSE P1-P3 are independently closed;
-the small P4 expected-input follow-up is assigned to the original owner.
-STORE's resource/lookup correction, APP's shared wheel-test correction and
-PARSE's year-window propagation are committed and locally green, with a combined
-Opus review in progress. APP's original owner has resumed service/config/
-bootstrap/CLI implementation; actual PostgreSQL application integration awaits
-the adapter review gate. Full end-to-end application validation has not run.
+The adapter reviews and corrections are independently approved: PARSE P1-P5,
+STORE packaging/account lookup and APP's stale-wheel correction are closed.
+The APP adapter integration gate is OPEN. The original APP owner continues
+service/config/bootstrap/CLI implementation and may run real PostgreSQL vertical
+tests when ready. The shared label helper is independently approved; its
+green-preserving CLI adoption is separately committed and awaits review. Full
+application/end-to-end validation has not run.
 Two old test schemas reported by STORE are preserved because their active-run
 attribution was uncertain; no unattributed schema was dropped.
