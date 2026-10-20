@@ -185,8 +185,9 @@ Public contract invariants to be concretized in APP-FOUNDATION:
 
 ### Frozen field/signature record
 
-APP-FOUNDATION iteration 1 is delivered; independent review is pending.
-No dependent implementation begins until that review passes.
+APP-FOUNDATION iterations 1 and 2 are preserved; independent Opus re-review
+passed iteration 2 at `9967f8d`. PARSE and STORE implementation is authorized
+in parallel against that reviewed contract commit.
 The following modules are the authoritative typed contract definitions:
 
 - `domain.ids`: NewType owner/account/card/import-run/installment-plan/
@@ -307,7 +308,9 @@ Review is independent and applies to fixes and integration work too.
 | PLAN / 0 | `13de890` | Documentation only | Ownership/contracts recorded before implementation |
 | PLAN / 1 | `c3e7904` | Documentation diff inspected; staged whitespace check passed | Associated-data, dry-run, reference/NULL and owner-account invariants explicitly settled with independent reviewer |
 | APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
-| APP-FOUNDATION / 2 | Pending leader commit | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner and LEAD GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Corrections independently reproduced as fixed; Opus re-review pending |
+| APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
+| PARSE / 1 | Pending | Original persistent owner implementing test-first against reviewed `9967f8d` | Disjoint ownership; independent review required on delivery |
+| STORE / 1 | Pending leader commit | Owner RED missing CLI resolver then database modules; owner GREEN 261 storage/contract tests; LEAD GREEN 365 foundation/storage/contract tests on real PostgreSQL | Delivery frozen for independent review; source migration packaging gap and added NULL-bank unique index explicitly reported |
 
 ### Findings ledger
 
@@ -321,10 +324,12 @@ Review is independent and applies to fixes and integration work too.
 | CONTRACT-06 | Shared / blocking | Independent reviewer required explicit identifier associated-data type on encrypt/decrypt | APP + STORE | 0 | Accepted; contract clarified in `c3e7904` |
 | DECISION-01 | PARSE / source fidelity | Rejected sign-normalizing refund original_amount: source plan requires billed/original, not an absolute rate | PARSE | 0 | Source signs preserved |
 | DECISION-02 | STORE / schema fidelity | Rejected partial natural installment unique index: source DDL requires unconditional natural uniqueness | STORE | 0 | Resolve both specified uniqueness conflicts without schema weakening |
-| F1 | APP-FOUNDATION / HIGH | Reviewer found CardHint label can expose last-4; LEAD reproduced accepting synthetic identifier-containing label and repr exposure | APP | 1 | Guard/regressions passed; independent re-review pending |
-| F2 | APP-FOUNDATION / MEDIUM | Reviewer found inconsistent precision boundary; LEAD reproduced excess precision retained in foreign-detail command | APP | 1 | Command-boundary quantization/regressions passed; re-review pending |
-| N1 | APP-FOUNDATION / test validity | Reviewer found domain isolation test imports only empty initializer; LEAD inspected actual test and agreed | APP | 1 | Every concrete domain module now exercised; re-review pending |
-| N2 | APP-FOUNDATION / correctness | Reviewer found stale FX rate accepted; LEAD reproduced billed 12 / original 3 with incorrect rate 3 | APP | 1 | Signed rate consistency and shared helper regressions passed; re-review pending |
+| F1 | APP-FOUNDATION / HIGH | Reviewer found CardHint label can expose last-4; LEAD reproduced accepting synthetic identifier-containing label and repr exposure | APP | 1 | Resolved; Opus independently verified guard/regressions in `9967f8d` |
+| F2 | APP-FOUNDATION / MEDIUM | Reviewer found inconsistent precision boundary; LEAD reproduced excess precision retained in foreign-detail command | APP | 1 | Resolved; Opus verified command quantization and parsed precision in `9967f8d` |
+| N1 | APP-FOUNDATION / test validity | Reviewer found domain isolation test imports only empty initializer; LEAD inspected actual test and agreed | APP | 1 | Resolved; Opus verified every concrete domain module is exercised |
+| N2 | APP-FOUNDATION / correctness | Reviewer found stale FX rate accepted; LEAD reproduced billed 12 / original 3 with incorrect rate 3 | APP | 1 | Resolved; Opus verified signed consistency and shared helper regressions |
+| STORE-PARENT-01 | STORE / schema scope | Owner added a NULL-bank account-number unique index despite prior ruling to keep source account uniqueness; LEAD confirmed actual ORM/migration and singular lookup uses first() | STORE | 0 | Independent review requested before accepting or correcting |
+| PACKAGE-01 | Cross-scope / installation | STORE reports root Alembic scripts omitted from wheel; installed init-db cannot locate migrations | STORE + APP | 0 | Must resolve with coordinated DB helper and APP-owned packaging before final validation |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
