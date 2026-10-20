@@ -6,8 +6,10 @@ The user requested finishing the currently running APP agent task, then stopping
 and recording the resume point. That task finished and its delivery was
 preserved. The user then requested **"continue implementation process"** before
 this checkpoint documentation was committed. Work has RESUMED at independent
-APP review and LEAD verification. The application is not independently approved
-and the overall task is incomplete.
+APP review and LEAD verification. LEAD's initial APP candidate verification now
+passes, including installed-wheel CLI acceptance. Independent Opus review
+returned **BLOCK** for two identity-selection defects; their first correction
+is assigned to the original APP owner. The overall task is incomplete.
 
 - Base branch: `master`, authorized baseline `ced9245`; it remains unchanged.
 - Implementation branch: `implementation/bank-transactions`.
@@ -35,16 +37,25 @@ and the overall task is incomplete.
    Preserve the existing per-issue counters and the three-unsuccessful-attempt
    stop rule.
 
-**Pre-commit review target APP-PC-01 (not yet independently reviewed or fixed):**
-`services/identity_gate.py`, `_Applier._create_card`, has
-`if existing: return existing[0].card_id`. This appears capable of implicitly
-reusing a first matching card after a `CreateCard` selection, including when
-several physical cards share issuer/last-4/account. Check this against the
-non-unique card identity and explicit-selection contract before approving APP.
-No reproduction or correction iteration was started at the pause; attempt count
-is zero. The reviewer is now validating it. The owner's empty candidate list for
-`CONFLICTING_HINTS` is another reported assumption for the reviewer to check,
-not a newly approved contract.
+**Independent APP iteration 1 review: BLOCK.** Opus reproduced APP-PC-01
+(HIGH) through the actual import service: an explicit `CreateCard` with two
+matching physical cards binds to the lowest-ID card and creates none.
+`_Applier._create_card` must create the requested card, not return `existing[0]`.
+Opus also reproduced APP-PC-02 (MEDIUM): `_bind` offers no candidates for
+`CONFLICTING_HINTS`, preventing the explicit existing-card selection required
+by the plan and diagram. LEAD validated both recommendations against the actual
+code, plan section 6 and diagram selection clauses. Both are accepted and
+assigned to the original APP owner in iteration 2, first correction attempt.
+Genuinely failing caller-visible regressions are required before production
+changes; original automatic uncontested reuse, noninteractive NEEDS_INPUT,
+ownership guards and atomicity must remain intact.
+
+Opus independently reproduced all 933 baseline tests, lint/format and strict
+mypy (69 files), plus parser goldens. It did not independently execute the
+installed-console acceptance and explicitly distinguishes LEAD's result from
+its own evidence. The hash-based audit-label observation is informational:
+that privacy deviation is already recorded in the approved clarifications
+below. No review recommendation was rejected.
 
 ### APP owner's reported verification, not LEAD re-verification
 
@@ -55,7 +66,36 @@ LEAD did not rerun those application checks during the pause. LEAD only
 performed the required pre-commit scope/safety inspection, staged whitespace
 check, input-preservation check, commits and session-helper cleanup. After the
 user resumed, LEAD launched an independent full-suite/lint/format/type run;
-its result is pending at this checkpoint.
+the measured result appears below.
+
+### LEAD verification after resumption
+
+For the frozen APP candidate `d66a31d` (HEAD `334832a` adds only this ledger),
+LEAD independently measured **933 tests passed in 147.69 seconds** against
+PostgreSQL 16, `ruff check src tests` passed, all 129 files passed formatting,
+and strict `mypy src` passed on **69 source files**. The owner's reported 71-file
+count is not substituted for the actual LEAD result.
+
+A fresh source copy produced a wheel installed into session artifacts outside
+the checkout. LEAD verified the imported CLI module's installed origin and ran
+the actual Windows `bank-transactions.exe` entry point from outside the
+checkout: **18 console invocations passed**, covering help, detection of all
+four originals without DSN/key, database initialization without a cipher key,
+noninteractive NEEDS_INPUT with zero identity/transaction writes, interactive
+Isracard dry-run and normal import, all four examples, repeats and both Max
+overlap orders. SQL assertions verified the example counts/totals above,
+607 Max FX rows, 374 unknown-currency reasons, 13 plans/44 linked rows,
+refund/location counts, 2181 combined transactions, unchanged prior-row
+provenance, no remaining RUNNING audit rows and hash-only audit source labels.
+Both uniquely owned acceptance schemas were cleaned. Evidence is retained in
+the session artifact `installed-cli-993c4df4d8/results.json` and its wheel.
+
+These checks establish the initial candidate's measured behavior, not approval
+of unresolved identity edge cases. Rebuild and rerun relevant acceptance after
+any review corrections. The acceptance harness initially assumed `Scripts`
+instead of pip's Windows `--target` `bin` directory; correcting that harness
+assumption required no application change. Its eager wheel-path evaluation was
+also corrected before the first execution.
 
 | Original example | Owner-reported PostgreSQL result |
 | --- | --- |
@@ -81,16 +121,25 @@ These are implemented choices awaiting APP review, not final acceptance.
 
 The session-owned container `transactions-194a7f6b-postgres` was **stopped, not
 removed** at the pause; its configuration and data were retained. It has now been
-restarted and `pg_isready` confirmed readiness on `127.0.0.1:57085`. Docker Desktop
-and unrelated containers were not stopped. If needed after a later pause:
+restarted; the initial `pg_isready` probe confirmed only internal container
+readiness, not the old published endpoint. Restart reassigned the dynamic host
+port from 57085 to 64956. LEAD's first resumed full-suite run encountered
+connection errors and the installed-CLI harness blocked against the obsolete
+port; both owned processes were stopped. These are environment failures, not
+application correction attempts. The corrected full-suite run first passed an
+external PostgreSQL `SELECT 1` against the current published port. Its 933 tests
+and installed-CLI acceptance subsequently passed as recorded above. Docker
+Desktop and unrelated containers were not stopped. If needed after a later pause:
 
 ```powershell
 docker start transactions-194a7f6b-postgres
 ```
 
-Use the existing `.venv\Scripts\python.exe`, `127.0.0.1:57085`, and obtain the
-test DSN/password from runtime container configuration without printing or
-committing secrets. Do not use `localhost` (a prior IPv6 connection hung).
+Use the existing `.venv\Scripts\python.exe` and `127.0.0.1`, deriving the current
+host port from `docker inspect` (`NetworkSettings.Ports.'5432/tcp'[0].HostPort`)
+after every start. Obtain the test DSN/password from runtime container
+configuration without printing or committing secrets, and verify an external
+connection before a suite. Do not use `localhost` (a prior IPv6 connection hung).
 Unattributed old test schemas remain preserved. No session-owned bounded helper
 process is left running by the APP owner.
 
@@ -434,6 +483,7 @@ Review is independent and applies to fixes and integration work too.
 | PLAN / 2 | `087186e` | Documentation-only correction hashes, 715-test evidence and finding counters | Preserved coordination checkpoint |
 | PLAN / 3 | `098bfc8` | Documentation-only adapter approvals, shared validation ownership and test-first evidence limits | APP integration gate recorded open |
 | PLAN / 4 | `930ff65` | Documentation-only final STORE3 approval | All adapter/shared-helper corrections independently approved before APP delivery |
+| PLAN / 5 | `334832a` | Documentation-only APP delivery checkpoint, resumption and test provenance | Original APP review and independent validation resumed |
 | APP-FOUNDATION / 1 | `65b80a3` | Owner RED: four collection errors for missing modules; owner, LEAD and REVIEW GREEN: 145 passed; ruff passed; strict mypy passed on 27 source files; isolated wheel build passed | Opus BLOCK: F1/F2; nonblocking N1/N2 accepted by LEAD; correction assigned to original owner |
 | APP-FOUNDATION / 2 | `9967f8d` | Fix attempt 1: owner RED missing rate helper then six command regression failures; owner, LEAD and REVIEW GREEN 183 passed, ruff passed, strict mypy 27 source files passed | Independent Opus PASS; PARSE/STORE barrier released |
 | PARSE / 1 | `f58ac75` | Owner GREEN 304 parser tests / 487 with foundation; LEAD GREEN 669 full delivered-component tests with real PostgreSQL, ruff passed, strict mypy 58 source files passed | Opus BLOCK P1/P2; LEAD validated both; real examples independently reconcile |
@@ -446,14 +496,16 @@ Review is independent and applies to fixes and integration work too.
 | PARSE / 4 | `bef4e77` | P4 attempt 2: owner genuine RED three failures / 11 passes, GREEN 14 workbook tests and 448 parsing/domain tests; REVIEW independently reproduced both RED and GREEN on the commit snapshot; LEAD scoped lint/format/type checks pass | Opus PASS; original P4 closed without resetting the counter |
 | APP-SHARED / 3 | `f63f9df` | Owner and LEAD 52 text/import-graph tests pass; REVIEW 115 domain tests and scoped lint/format/type/purity checks pass | Opus PASS; original test-first RED not captured, reconstructed RED explicitly excluded from evidence |
 | STORE / 3 | `c6728de` | Green-preserving refactor: baseline 19 resolver tests pass; owner 106 focused/contracts tests pass; LEAD 74 focused checks pass; REVIEW 76 selected privacy/resolver tests and full strict mypy 60 source files pass | Opus PASS; CLI and service share pure label validation without behavior or public-contract changes |
-| APP / 1 | `d66a31d` | Owner reports 933 tests including actual PostgreSQL/example/CLI scenarios, lint/format 129 files and strict mypy 71 source files pass; LEAD scope/safety checks at pause, independent full checks now running after resumption | Frozen and committed; original Opus review and APP-PC-01 validation in progress |
+| APP / 1 | `d66a31d` | LEAD and Opus independently reproduce 933 tests, lint/format 129 files and strict mypy 69 source files; LEAD fresh installed-wheel CLI passes 18 console invocations with SQL goldens outside checkout | Opus BLOCK for APP-PC-01/02; both recommendations independently validated by LEAD |
+| APP / 2 | Pending owner delivery | Genuine RED and one bounded correction/verification attempt requested for APP-PC-01/02 | Original owner implementing; separate correction commit and original Opus re-review required |
 
 LEAD independently ran the combined committed adapter/foundation tree at
 `78fa38b`: **715 tests passed** against PostgreSQL 16 in 160.11 seconds,
 `ruff check src tests` passed, all 104 files passed `ruff format --check`, and
 strict `mypy src` passed on 60 source files. This is component integration
-evidence, not completed application/end-to-end validation. The service and CLI
-have not yet been delivered. The installed-wheel acceptance imports from a
+evidence, not completed application/end-to-end validation. At that earlier
+checkpoint the service and CLI had not yet been delivered. The installed-wheel
+migration acceptance imports from a
 temporary installation outside the checkout, verifies the module origin, and
 round-trips an isolated schema; it does not merely inspect ZIP members.
 
@@ -483,7 +535,8 @@ round-trips an isolated schema; it does not merely inspect ZIP members.
 | A1 | APP-SHARED / LOW-MEDIUM | Reviewer found wheel fixture builds in checkout and can package stale build/lib files; LEAD read the fixture and accepted the finding | APP + STORE | 1 | Resolved; fresh builds and stale-module regression independently approved in `b0d059b` |
 | A2 | APP-SHARED / LOW | Fake account none/one/many test only returns its configured value | APP + STORE | 1 | Fake removed in `b0d059b`; actual PostgreSQL zero/one/many, ordering and known-bank isolation pass |
 | A3 | APP-SHARED / INFO | Migration ini glob has no canonical package file; root developer ini remains intentional | APP | 1 | Unused glob removed in `b0d059b`; single canonical migration implementation preserved |
-| APP-PC-01 | APP / review target | Pre-commit inspection saw `_Applier._create_card` return `existing[0]` without cardinality or explicit card selection; inspect the CreateCard path against ambiguity/physical-card invariants | APP | 0 | Initially deferred by pause; now under original Opus review, no correction attempted |
+| APP-PC-01 | APP / HIGH | Opus actual-service probe binds explicit CreateCard to card 1 of 2 and creates none; LEAD validated `existing[0]` against plan section 6 / diagram's nonunique physical-card and explicit-selection rules | APP | 0 completed | First correction assigned in APP2; actual CreateCard must create, not implicitly reuse |
+| APP-PC-02 | APP / MEDIUM | Opus actual-service probe cannot select a conflicting existing card because `_bind` offers no candidates; LEAD validated required explicit selection against plan section 6 and diagram | APP | 0 completed | First correction assigned in APP2; offer issuer/last-4 candidates, preserve noninteractive NEEDS_INPUT |
 
 Build environment note: `pip wheel --no-build-isolation` initially failed
 because setuptools was not installed in the runtime environment. Standard
@@ -525,7 +578,10 @@ and preserved at `d66a31d`; its owner reports passing application/PostgreSQL/
 example/in-checkout CLI tests. The shared label helper and its green-preserving
 CLI adoption are independently approved. The user requested a pause after APP
 delivery, then resumed before its documentation checkpoint was committed.
-Independent APP review and LEAD full verification are now running.
-Installed-wheel CLI acceptance and final completion reporting remain pending.
+LEAD full verification and installed-wheel CLI acceptance now pass for the
+initial APP candidate. Independent APP review returned BLOCK for the two
+validated identity findings. The original owner is making their first
+correction; separate commit, re-review and final acceptance/reporting remain
+pending.
 Two old test schemas reported by STORE are preserved because their active-run
 attribution was uncertain; no unattributed schema was dropped.
