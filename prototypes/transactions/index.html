@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transactions – prototype</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Spend<span>Track</span> <span class="muted" style="font-weight:400;font-size:12px">prototype</span></div>
+    <nav class="nav" id="nav">
+      <a href="#/analysis" data-nav="analysis">Analysis</a>
+      <a href="#/transactions" data-nav="transactions">Transactions</a>
+      <a href="#/trips" data-nav="trips">Trips</a>
+    </nav>
+  </div>
+  <main id="view"></main>
+  <div class="backdrop" id="backdrop" data-act="closePanel"></div>
+  <div class="toast" id="toast" hidden></div>
+  <aside class="panel" id="panel" aria-label="Transaction details"></aside>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

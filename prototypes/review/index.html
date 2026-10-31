@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transactions – Review &amp; Categories (prototype)</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">Trans<span>actions</span> <small style="color:var(--muted);font-weight:500">prototype</small></div>
+    <nav>
+      <a href="#/review" id="nav-review">Review queue <span class="badge inferred" id="nav-count"></span></a>
+      <a href="#/categories" id="nav-categories">Category mapping</a>
+    </nav>
+    <div class="spacer"></div>
+    <button class="sm" id="reset-demo" title="Clear all saved decisions in this browser">Reset demo data</button>
+  </div>
+</header>
+<main id="app"></main>
+<div id="toast-host"></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

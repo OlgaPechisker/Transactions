@@ -1,0 +1,1748 @@
+openapi: 3.1.0
+info:
+  title: Bank Transactions UI API
+  version: 1.0.0-proposal
+  description: |
+    REST contract between the web UI prototypes and the Python backend.
+    See api-contract.md for conventions, gaps-and-questions.md for gaps (G-nn), decisions and open questions (Q-nn).
+    Endpoints that depend on data missing from the current schema are marked with `x-schema-gaps`.
+    Sharing between users is out of scope for v1 (G-02): every endpoint returns only the caller's own data.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+tags:
+  - name: Auth
+  - name: Cards
+  - name: Imports
+  - name: Transactions
+  - name: Trips
+  - name: Analysis
+  - name: CurrencyValidation
+  - name: Categorization
+
+paths:
+  /sessions:
+    post:
+      tags: [Auth]
+      operationId: createSession
+      summary: Sign in (Login screen)
+      security: []
+      x-schema-gaps: [G-01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 1 }
+      responses:
+        '201':
+          description: Signed in. Also sets the session cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expiresAt, user]
+                properties:
+                  token: { type: string }
+                  expiresAt: { $ref: '#/components/schemas/Timestamp' }
+                  user: { $ref: '#/components/schemas/Me' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /sessions/current:
+    delete:
+      tags: [Auth]
+      operationId: deleteCurrentSession
+      summary: Sign out (top bar)
+      x-schema-gaps: [G-01]
+      responses:
+        '204': { description: Signed out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Current user profile and counters (top bar, Profile, review nav badge)
+      x-schema-gaps: [G-01, G-15]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /cards:
+    get:
+      tags: [Cards]
+      operationId: listCards
+      summary: The caller's own cards (Profile, Import identity step)
+      x-schema-gaps: [G-01]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Card' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /cards/{cardId}:
+    parameters:
+      - $ref: '#/components/parameters/CardId'
+    patch:
+      tags: [Cards]
+      operationId: updateCard
+      summary: Set card nickname (Profile & cards)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nickname]
+              properties:
+                nickname: { type: [string, 'null'], maxLength: 120 }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Card' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /imports:
+    post:
+      tags: [Imports]
+      operationId: runImport
+      summary: Dry run or real import of an uploaded workbook, optionally answering identity questions (Import steps 2-4)
+      description: |
+        The workbook is sent with every call; the server keeps no upload between calls (G-04).
+        The client re-sends the same file for the identity re-run and for the real import.
+        Identity question ids are deterministic (derived from issuer + card hint, e.g. a hash), so selections
+        made against a dry-run response stay valid when the same file is re-uploaded.
+        A dry run writes no transactions.
+      x-schema-gaps: [G-01]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, dryRun]
+              properties:
+                file:
+                  type: string
+                  contentMediaType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+                  description: The .xlsx statement workbook.
+                dryRun:
+                  type: boolean
+                identitySelections:
+                  type: string
+                  contentMediaType: application/json
+                  description: JSON-encoded array of IdentitySelection answering identityQuestions from a previous response.
+                  contentSchema:
+                    type: array
+                    items: { $ref: '#/components/schemas/IdentitySelection' }
+      responses:
+        '201':
+          description: Import run recorded
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      tags: [Imports]
+      operationId: listImports
+      summary: Import history
+      description: |
+        Runs are attributed to the caller through the cards of the transactions they imported (G-08); there is
+        no import_runs.user_id. Consequently dry runs and runs that imported zero transactions (all duplicates,
+        FAILED, NEEDS_INPUT) never appear here.
+      x-schema-gaps: [G-01, G-08]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sort
+          in: query
+          schema: { type: string, enum: [startedAt, -startedAt], default: -startedAt }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ImportSummary' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /transactions:
+    get:
+      tags: [Transactions]
+      operationId: listTransactions
+      summary: Filtered transaction list with summary and groups (Transactions list, analysis drill-down, category-mapping table)
+      x-schema-gaps: [G-10, G-11]
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: month
+          in: query
+          schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+        - $ref: '#/components/parameters/CategoryFilter'
+        - name: bankCategory
+          in: query
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - $ref: '#/components/parameters/CustomCategoryFilter'
+        - name: categorySource
+          in: query
+          explode: true
+          schema: { type: array, items: { $ref: '#/components/schemas/CategorySource' } }
+        - $ref: '#/components/parameters/CardIdFilter'
+        - $ref: '#/components/parameters/CurrencyFilter'
+        - $ref: '#/components/parameters/MinAmount'
+        - $ref: '#/components/parameters/MaxAmount'
+        - $ref: '#/components/parameters/MerchantFilter'
+        - $ref: '#/components/parameters/TypeFilter'
+        - $ref: '#/components/parameters/CountryFilter'
+        - $ref: '#/components/parameters/TripIdFilter'
+        - name: needsReview
+          in: query
+          description: true = has a user-visible review reason (v1 = UNKNOWN_CURRENCY only); false = has none. Internal-only reasons are ignored (Q-19).
+          schema: { type: boolean }
+        - name: reviewReason
+          in: query
+          description: Has this review reason. Repeat for OR. v1 accepts UNKNOWN_CURRENCY only; any other value → 400 INVALID_FILTER (Q-19).
+          explode: true
+          schema: { type: array, items: { $ref: '#/components/schemas/ReviewReason' } }
+        - name: groupBy
+          in: query
+          schema: { $ref: '#/components/schemas/Dimension' }
+        - name: include
+          in: query
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: { type: string, enum: [summary, groups] }
+            default: [summary]
+        - name: sort
+          in: query
+          description: Comma-separated; prefix '-' for descending.
+          schema:
+            type: string
+            default: -transactionDate
+            pattern: '^-?(transactionDate|chargeDate|merchant|country|city|category|bankCategory|card|type|originalAmount|originalCurrency|billingAmount|effectiveRate|commission|trip|notes|reviewCount)(,-?(transactionDate|chargeDate|merchant|country|city|category|bankCategory|card|type|originalAmount|originalCurrency|billingAmount|effectiveRate|commission|trip|notes|reviewCount))*$'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TransactionListItem' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+                  summary: { $ref: '#/components/schemas/TransactionSummary' }
+                  groups:
+                    type: array
+                    items: { $ref: '#/components/schemas/TransactionGroup' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /transactions/{transactionId}:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    get:
+      tags: [Transactions]
+      operationId: getTransaction
+      summary: Transaction detail (detail panel, analysis drawer)
+      x-schema-gaps: [G-10, G-11]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Transactions]
+      operationId: updateTransaction
+      summary: Set/clear the custom category override
+      description: |
+        customCategory must name an existing custom category of the caller (select-or-create: the UI creates a
+        new one with POST /custom-categories first). Unknown name → 422 UNKNOWN_CATEGORY. null clears the override.
+      x-schema-gaps: [G-10]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customCategory]
+              properties:
+                customCategory: { type: [string, 'null'], minLength: 1, maxLength: 60 }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /filter-options:
+    get:
+      tags: [Transactions]
+      operationId: getFilterOptions
+      summary: Values for filter pickers (Transactions, Analysis, Category mapping)
+      x-schema-gaps: [G-10, G-11]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FilterOptions' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /trips:
+    get:
+      tags: [Trips]
+      operationId: listTrips
+      summary: Trips with stats (Trips list, trip pickers)
+      x-schema-gaps: [G-11]
+      parameters:
+        - name: sort
+          in: query
+          schema: { type: string, enum: [startDate, -startDate, name, -name], default: -startDate }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TripSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Trips]
+      operationId: createTrip
+      summary: Create trip
+      x-schema-gaps: [G-11]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, currency, startDate, endDate]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                currency: { $ref: '#/components/schemas/CurrencyCode' }
+                startDate: { $ref: '#/components/schemas/Date' }
+                endDate: { $ref: '#/components/schemas/Date' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /trips/{tripId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Trips]
+      operationId: getTrip
+      summary: Trip detail with stats and member lists
+      description: |
+        A transaction belongs to at most one trip. Auto members = same original currency and transaction_date in
+        [startDate, endDate], minus exclusions. When same-currency trips overlap, the earliest-starting trip
+        claims the auto member (tie → earliest created). A tag always wins over auto membership.
+      x-schema-gaps: [G-11]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trips/{tripId}/candidates:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Trips]
+      operationId: listTripCandidates
+      summary: Transactions that can be tagged (Trip detail "Add transactions")
+      description: Without q, returns non-members dated startDate-30d .. endDate+7d.
+      x-schema-gaps: [G-11]
+      parameters:
+        - name: q
+          in: query
+          description: Candidate search across merchant name, date (YYYY-MM-DD prefix) and category.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 8 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TransactionListItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trips/{tripId}/tagged-transactions/{transactionId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/TransactionId'
+    put:
+      tags: [Trips]
+      operationId: tagTransaction
+      summary: Tag (pin) a transaction to a trip; moves it from any other trip and removes an exclusion
+      description: A transaction belongs to at most one trip (Q-12). Tagging it here deletes its tag on any other trip.
+      x-schema-gaps: [G-11]
+      responses:
+        '204': { description: Tagged }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Trips]
+      operationId: untagTransaction
+      summary: Remove tag
+      x-schema-gaps: [G-11]
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trips/{tripId}/excluded-transactions/{transactionId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/TransactionId'
+    put:
+      tags: [Trips]
+      operationId: excludeTransaction
+      summary: Exclude an auto-matched transaction
+      x-schema-gaps: [G-11]
+      responses:
+        '204': { description: Excluded }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Trips]
+      operationId: restoreTransaction
+      summary: Restore an excluded transaction
+      x-schema-gaps: [G-11]
+      responses:
+        '204': { description: Restored }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /spending-analysis:
+    get:
+      tags: [Analysis]
+      operationId: getSpendingAnalysis
+      summary: All aggregates for the analysis screen in one call
+      x-schema-gaps: [G-10, G-11]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Date' }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Date' }
+        - name: compare
+          in: query
+          schema: { type: string, enum: [none, previous, yoy], default: none }
+        - name: groupBy
+          in: query
+          schema: { $ref: '#/components/schemas/Dimension' }
+        - name: bucket
+          in: query
+          description: Concrete bucket; client resolves "auto". Weeks start Monday. "Today" (complete vs partial buckets) is computed in UTC.
+          schema: { $ref: '#/components/schemas/Bucket' }
+        - name: seriesBy
+          in: query
+          schema: { $ref: '#/components/schemas/Dimension' }
+        - name: include
+          in: query
+          style: form
+          explode: false
+          schema:
+            type: array
+            items: { type: string, enum: [groups, timeSeries, matrix] }
+            default: [groups, timeSeries, matrix]
+        - $ref: '#/components/parameters/CategoryFilter'
+        - $ref: '#/components/parameters/CustomCategoryFilter'
+        - $ref: '#/components/parameters/CardIdFilter'
+        - $ref: '#/components/parameters/CurrencyFilter'
+        - $ref: '#/components/parameters/TypeFilter'
+        - $ref: '#/components/parameters/TripIdFilter'
+        - $ref: '#/components/parameters/CountryFilter'
+        - $ref: '#/components/parameters/MerchantFilter'
+        - $ref: '#/components/parameters/MinAmount'
+        - $ref: '#/components/parameters/MaxAmount'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SpendingAnalysis' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /currency-validation-queue:
+    get:
+      tags: [CurrencyValidation]
+      operationId: getCurrencyValidationQueue
+      summary: Queue summary, suggestion groups, tab counts, country options
+      description: total = pending (UNKNOWN_CURRENCY review-reason rows) + validated (currency_validations audit rows).
+      x-schema-gaps: [G-15]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyValidationQueue' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /currency-validation-queue/items:
+    get:
+      tags: [CurrencyValidation]
+      operationId: listCurrencyValidationItems
+      summary: Pending / validated rows
+      x-schema-gaps: [G-15]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [PENDING, VALIDATED], default: PENDING }
+        - $ref: '#/components/parameters/CountryFilter'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: suggestedCurrency
+          in: query
+          explode: true
+          schema: { type: array, items: { $ref: '#/components/schemas/CurrencyCode' } }
+        - name: confidence
+          in: query
+          explode: true
+          schema: { type: array, items: { $ref: '#/components/schemas/Confidence' } }
+        - $ref: '#/components/parameters/MerchantFilter'
+        - name: sort
+          in: query
+          schema: { type: string, default: -transactionDate }
+        - $ref: '#/components/parameters/Page'
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 40 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CurrencyValidationItem' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /currency-validation-batches:
+    post:
+      tags: [CurrencyValidation]
+      operationId: createCurrencyValidationBatch
+      summary: Validate currency for one row, a selection, a suggestion group or all filtered rows
+      description: |
+        For each row: sets transactions.original_currency, deletes the UNKNOWN_CURRENCY review reason and writes a
+        currency_validations audit row in a new batch. currency must be one of currencyOptions (422 otherwise).
+      x-schema-gaps: [G-15]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CurrencyValidationBatchRequest' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyValidationBatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /currency-validation-batches/{batchId}:
+    parameters:
+      - name: batchId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    delete:
+      tags: [CurrencyValidation]
+      operationId: undoCurrencyValidationBatch
+      summary: Undo a validation batch
+      description: For each row of the batch resets original_currency to NULL, re-inserts the UNKNOWN_CURRENCY review reason and deletes the audit row.
+      x-schema-gaps: [G-15]
+      responses:
+        '204': { description: Undone }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /currency-validations/{transactionId}:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    delete:
+      tags: [CurrencyValidation]
+      operationId: deleteCurrencyValidation
+      summary: Move a validated row back to the queue
+      description: Resets original_currency to NULL, re-inserts the UNKNOWN_CURRENCY review reason and deletes the audit row.
+      x-schema-gaps: [G-15]
+      responses:
+        '204': { description: Moved back }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /categorization:
+    get:
+      tags: [Categorization]
+      operationId: getCategorization
+      summary: Category mapping screen overview
+      x-schema-gaps: [G-10, G-17, G-18]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategorizationOverview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /custom-categories:
+    post:
+      tags: [Categorization]
+      operationId: createCustomCategory
+      summary: Create custom category
+      x-schema-gaps: [G-10]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomCategory' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomCategory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /category-mappings/{bankCategory}:
+    parameters:
+      - name: bankCategory
+        in: path
+        required: true
+        description: URL-encoded raw bank category.
+        schema: { type: string }
+    put:
+      tags: [Categorization]
+      operationId: putCategoryMapping
+      summary: Map a bank category to a custom category
+      x-schema-gaps: [G-17]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customCategory]
+              properties:
+                customCategory: { type: string }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryMapping' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Categorization]
+      operationId: deleteCategoryMapping
+      summary: Reset a bank category mapping
+      x-schema-gaps: [G-17]
+      responses:
+        '204': { description: Reset }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /category-rules:
+    post:
+      tags: [Categorization]
+      operationId: createCategoryRule
+      summary: Add a merchant-text rule (also used to undo a delete)
+      x-schema-gaps: [G-18]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [terms, category]
+              properties:
+                terms:
+                  type: array
+                  minItems: 1
+                  items: { type: string, minLength: 1 }
+                category: { type: string }
+                position: { type: integer, minimum: 0 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryRule' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /category-rules/{ruleId}:
+    parameters:
+      - name: ruleId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    delete:
+      tags: [Categorization]
+      operationId: deleteCategoryRule
+      summary: Delete a rule
+      x-schema-gaps: [G-18]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+
+  headers:
+    Location:
+      description: URL of the created resource
+      schema: { type: string }
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    From:
+      name: from
+      in: query
+      schema: { $ref: '#/components/schemas/Date' }
+    To:
+      name: to
+      in: query
+      schema: { $ref: '#/components/schemas/Date' }
+    CardId:
+      name: cardId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    CategoryFilter:
+      name: category
+      in: query
+      description: Effective category (Hebrew bank name or custom name; the client translates English input via its i18n dictionary). Repeat for OR.
+      explode: true
+      schema: { type: array, items: { type: string } }
+    CustomCategoryFilter:
+      name: customCategory
+      in: query
+      description: Custom category name, or "none".
+      explode: true
+      schema: { type: array, items: { type: string } }
+    CardIdFilter:
+      name: cardId
+      in: query
+      explode: true
+      schema: { type: array, items: { $ref: '#/components/schemas/Id' } }
+    CurrencyFilter:
+      name: currency
+      in: query
+      description: Original currency ISO code, or "UNKNOWN".
+      explode: true
+      schema:
+        type: array
+        items: { type: string, pattern: '^([A-Z]{3}|UNKNOWN)$' }
+    MinAmount:
+      name: minAmount
+      in: query
+      schema: { $ref: '#/components/schemas/Decimal' }
+    MaxAmount:
+      name: maxAmount
+      in: query
+      schema: { $ref: '#/components/schemas/Decimal' }
+    MerchantFilter:
+      name: merchant
+      in: query
+      description: Merchant name contains. Repeat for OR.
+      explode: true
+      schema: { type: array, items: { type: string } }
+    TypeFilter:
+      name: type
+      in: query
+      explode: true
+      schema: { type: array, items: { $ref: '#/components/schemas/TransactionType' } }
+    CountryFilter:
+      name: country
+      in: query
+      description: ISO 3166-1 alpha-2 merchant country code. Repeat for OR.
+      explode: true
+      schema: { type: array, items: { $ref: '#/components/schemas/CountryCode' } }
+    TripIdFilter:
+      name: tripId
+      in: query
+      description: Trip id, or "none".
+      explode: true
+      schema: { type: array, items: { type: string } }
+
+  responses:
+    BadRequest:
+      description: Malformed request or invalid query parameter
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Not found or not visible to the caller
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Conflicting state
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PayloadTooLarge:
+      description: File too large (FILE_TOO_LARGE)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedMediaType:
+      description: Not an .xlsx workbook (UNSUPPORTED_FILE_TYPE)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ValidationError:
+      description: Semantic validation failed
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: Rate limited
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Id:
+      type: string
+      description: Opaque identifier
+    Date:
+      type: string
+      format: date
+    Timestamp:
+      type: string
+      format: date-time
+    Decimal:
+      type: string
+      pattern: '^-?\d+(\.\d+)?$'
+    Rate:
+      type: string
+      pattern: '^\d+\.\d{6}$'
+    CurrencyCode:
+      type: string
+      pattern: '^[A-Z]{3}$'
+    CountryCode:
+      type: string
+      pattern: '^[A-Z]{2}$'
+      description: ISO 3166-1 alpha-2. Country names are rendered by the frontend i18n dictionary.
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { $ref: '#/components/schemas/Decimal' }
+        currency:
+          type: [string, 'null']
+          pattern: '^[A-Z]{3}$'
+          description: null when the currency is unknown
+    Issuer:
+      type: string
+      enum: [ISRACARD, MAX, CAL]
+    TransactionType:
+      type: string
+      enum: [REGULAR, INSTALLMENTS, RECURRING, IMMEDIATE_CHARGE]
+    ReviewReason:
+      type: string
+      description: |
+        User-visible review reasons. v1 exposes UNKNOWN_CURRENCY only (resolved in the currency-validation queue).
+        The database enum also holds UNMATCHED_FOREIGN_FEE and AMBIGUOUS_INSTALLMENT; they are still stored for
+        monitoring but are never returned or accepted by the API (Q-19).
+      enum: [UNKNOWN_CURRENCY]
+    ImportStatus:
+      type: string
+      enum: [RUNNING, SUCCESS, PARTIAL, NEEDS_INPUT, FAILED]
+    CategorySource:
+      type: string
+      enum: [OVERRIDE, RULE, MAPPING, BANK]
+    Confidence:
+      type: string
+      enum: [HIGH, MEDIUM, LOW]
+    Dimension:
+      type: string
+      enum: [category, customCategory, day, week, month, year, card, currency, merchant, type, trip, country]
+    Bucket:
+      type: string
+      enum: [day, week, month, year]
+
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string }
+        detail: { type: string }
+        instance: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, code, message]
+            properties:
+              field: { type: string }
+              code: { type: string }
+              message: { type: string }
+
+    PageMeta:
+      type: object
+      required: [page, pageSize, totalItems, totalPages]
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        totalItems: { type: integer }
+        totalPages: { type: integer }
+
+    Person:
+      type: object
+      required: [name, email]
+      properties:
+        name: { type: string }
+        email: { type: [string, 'null'], format: email }
+
+    ReviewReasonCount:
+      type: object
+      required: [reason, count]
+      properties:
+        reason: { $ref: '#/components/schemas/ReviewReason' }
+        count: { type: integer, minimum: 0 }
+
+    Me:
+      type: object
+      required: [id, name, email, role, counters]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [OWNER], description: Constant label (Q-18). }
+        csrfToken: { type: string }
+        counters:
+          type: object
+          required: [pendingCurrencyValidations, needsReviewByReason]
+          properties:
+            pendingCurrencyValidations: { type: integer }
+            needsReviewByReason:
+              type: array
+              description: One entry per user-visible ReviewReason (v1 = UNKNOWN_CURRENCY only) that has at least one transaction.
+              items: { $ref: '#/components/schemas/ReviewReasonCount' }
+
+    CardRef:
+      type: object
+      required: [id, label, issuer, last4, nickname, ownerName]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        label: { type: string }
+        issuer: { $ref: '#/components/schemas/Issuer' }
+        last4: { type: string, pattern: '^\d{4}$' }
+        nickname: { type: [string, 'null'] }
+        ownerName: { type: string }
+
+    Card:
+      type: object
+      required: [id, label, issuer, last4, nickname, owner]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        label: { type: string }
+        issuer: { $ref: '#/components/schemas/Issuer' }
+        last4: { type: string, pattern: '^\d{4}$' }
+        nickname: { type: [string, 'null'] }
+        owner: { $ref: '#/components/schemas/Person' }
+
+    IdentitySelection:
+      oneOf:
+        - type: object
+          required: [questionId, action, cardId]
+          properties:
+            questionId: { type: string }
+            action: { const: USE_EXISTING_CARD }
+            cardId: { $ref: '#/components/schemas/Id' }
+        - type: object
+          required: [questionId, action]
+          properties:
+            questionId: { type: string }
+            action: { const: CREATE_CARD }
+            nickname: { type: [string, 'null'], maxLength: 120 }
+
+    IdentityQuestion:
+      type: object
+      required: [id, reason, issuer, last4, candidates, allowedActions]
+      properties:
+        id:
+          type: string
+          description: Deterministic (derived from issuer + card hint, e.g. a hash) so it is stable when the same file is re-uploaded.
+        reason: { type: string, enum: [NO_MATCHING_CARD, AMBIGUOUS_CARDS, CONFLICTING_HINTS] }
+        issuer: { $ref: '#/components/schemas/Issuer' }
+        last4: { type: [string, 'null'], pattern: '^\d{4}$' }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/CardRef' }
+        allowedActions:
+          type: array
+          items: { type: string, enum: [USE_EXISTING_CARD, CREATE_CARD] }
+
+    ImportIssue:
+      type: object
+      description: Response-only (not persisted). The UI shows "Sheet {sheetPosition}"; sheet names are never returned.
+      required: [sheetPosition, row, code, severity, message]
+      properties:
+        sheetPosition: { type: integer, minimum: 1 }
+        row: { type: integer }
+        code:
+          type: string
+          enum: [PENDING_TRANSACTION, MALFORMED_ROW, INVALID_DATE, INVALID_AMOUNT, MISSING_REQUIRED_VALUE, MISSING_OR_ZERO_FX_ORIGINAL_AMOUNT, TOTALS_MISMATCH]
+        severity: { type: string, enum: [INFO, WARNING, ERROR] }
+        message: { type: string }
+
+    ImportCounts:
+      type: object
+      required: [read, imported, duplicate, skipped, needsReview, needsReviewByReason]
+      properties:
+        read: { type: integer }
+        imported: { type: integer }
+        duplicate: { type: integer }
+        skipped: { type: integer }
+        needsReview:
+          type: integer
+          description: Rows (would be) imported with a user-visible review reason (v1 = UNKNOWN_CURRENCY only). Computed from the import report, not stored.
+        needsReviewByReason:
+          type: array
+          description: Non-zero counts per user-visible ReviewReason (v1 = UNKNOWN_CURRENCY only).
+          items: { $ref: '#/components/schemas/ReviewReasonCount' }
+
+    ImportResult:
+      type: object
+      required: [id, status, dryRun, issuer, fileName, sha256, startedAt, counts, warnings, issues, identityQuestions]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        status: { $ref: '#/components/schemas/ImportStatus' }
+        dryRun: { type: boolean }
+        issuer:
+          description: Issuer detected by the parser registry; null if no parser recognised the file.
+          oneOf:
+            - { $ref: '#/components/schemas/Issuer' }
+            - { type: 'null' }
+        fileName:
+          type: string
+          description: Echoed for display only; never persisted.
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        startedAt: { $ref: '#/components/schemas/Timestamp' }
+        counts: { $ref: '#/components/schemas/ImportCounts' }
+        warnings: { type: array, items: { type: string } }
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/ImportIssue' }
+        identityQuestions:
+          type: array
+          items: { $ref: '#/components/schemas/IdentityQuestion' }
+
+    ImportSummary:
+      type: object
+      required: [id, fileName, sha256, startedAt, status, rowsImported]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        fileName: { type: string }
+        sha256: { type: string }
+        startedAt: { $ref: '#/components/schemas/Timestamp' }
+        status: { $ref: '#/components/schemas/ImportStatus' }
+        rowsImported: { type: integer }
+
+    Category:
+      type: object
+      description: Bank names are returned in Hebrew only; English labels come from the frontend i18n dictionary.
+      required: [bank, custom, effective, source]
+      properties:
+        bank: { type: [string, 'null'] }
+        custom: { type: [string, 'null'] }
+        effective: { type: [string, 'null'] }
+        source: { $ref: '#/components/schemas/CategorySource' }
+
+    TripRef:
+      type: object
+      required: [id, name, membership]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        membership: { type: string, enum: [TAGGED, AUTO] }
+
+    TransactionListItem:
+      type: object
+      required: [id, transactionDate, chargeDate, merchant, city, country, category, card, type, installment, original, billing, effectiveRate, commission, trip, notes, reviewReasons]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        transactionDate: { $ref: '#/components/schemas/Date' }
+        chargeDate:
+          oneOf:
+            - { $ref: '#/components/schemas/Date' }
+            - { type: 'null' }
+        merchant: { type: string }
+        city: { type: [string, 'null'] }
+        country: { type: [string, 'null'] }
+        category: { $ref: '#/components/schemas/Category' }
+        card: { $ref: '#/components/schemas/CardRef' }
+        type: { $ref: '#/components/schemas/TransactionType' }
+        installment:
+          oneOf:
+            - type: object
+              required: [number, total]
+              properties:
+                number: { type: integer }
+                total: { type: integer }
+            - { type: 'null' }
+        original:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        billing: { $ref: '#/components/schemas/Money' }
+        effectiveRate:
+          oneOf:
+            - { $ref: '#/components/schemas/Rate' }
+            - { type: 'null' }
+        commission:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        trip:
+          description: The single trip this transaction belongs to (Q-12), or null.
+          oneOf:
+            - { $ref: '#/components/schemas/TripRef' }
+            - { type: 'null' }
+        notes: { type: [string, 'null'] }
+        reviewReasons:
+          type: array
+          description: User-visible review reasons only (v1 = UNKNOWN_CURRENCY). The detail panel links it to the currency-validation queue; there is no generic "Mark as reviewed" (Q-21).
+          items: { $ref: '#/components/schemas/ReviewReason' }
+
+    TransactionDetail:
+      allOf:
+        - $ref: '#/components/schemas/TransactionListItem'
+        - type: object
+          required: [fx, installmentPlan, importedAt]
+          properties:
+            fx:
+              oneOf:
+                - type: object
+                  required: [statedRate, effectiveRate, deviationPercent, commission]
+                  properties:
+                    statedRate:
+                      oneOf:
+                        - { $ref: '#/components/schemas/Rate' }
+                        - { type: 'null' }
+                    effectiveRate: { $ref: '#/components/schemas/Rate' }
+                    deviationPercent:
+                      oneOf:
+                        - { $ref: '#/components/schemas/Decimal' }
+                        - { type: 'null' }
+                    commission: { $ref: '#/components/schemas/Money' }
+                - { type: 'null' }
+            installmentPlan:
+              oneOf:
+                - type: object
+                  required: [number, total, planTotal, perPayment, remainingPayments, remainingAmount]
+                  properties:
+                    number: { type: integer }
+                    total: { type: integer }
+                    planTotal: { $ref: '#/components/schemas/Money' }
+                    perPayment: { $ref: '#/components/schemas/Money' }
+                    remainingPayments: { type: integer }
+                    remainingAmount: { $ref: '#/components/schemas/Money' }
+                - { type: 'null' }
+            importedAt: { $ref: '#/components/schemas/Timestamp' }
+
+    TransactionSummary:
+      type: object
+      required: [count, purchaseCount, refundCount, net, gross, refunds, originalTotals, unknownCurrencyCount, commission]
+      properties:
+        count: { type: integer }
+        purchaseCount: { type: integer }
+        refundCount: { type: integer }
+        net: { $ref: '#/components/schemas/Money' }
+        gross: { $ref: '#/components/schemas/Money' }
+        refunds: { $ref: '#/components/schemas/Money' }
+        originalTotals:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
+        unknownCurrencyCount: { type: integer }
+        commission: { $ref: '#/components/schemas/Money' }
+
+    TransactionGroup:
+      type: object
+      required: [key, label, count, net, originalTotals]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        count: { type: integer }
+        net: { $ref: '#/components/schemas/Money' }
+        originalTotals:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
+
+    FilterOptions:
+      type: object
+      required: [categories, customCategories, cards, currencies, unknownCurrencyCount, types, countries, trips, dateRange]
+      properties:
+        categories:
+          type: array
+          items:
+            type: object
+            required: [bank, count]
+            properties:
+              bank: { type: string }
+              count: { type: integer }
+        customCategories:
+          type: array
+          items:
+            type: object
+            required: [name, count]
+            properties:
+              name: { type: string }
+              count: { type: integer }
+        cards:
+          type: array
+          items: { $ref: '#/components/schemas/CardRef' }
+        currencies:
+          type: array
+          items:
+            type: object
+            required: [code, count]
+            properties:
+              code: { $ref: '#/components/schemas/CurrencyCode' }
+              count: { type: integer }
+        unknownCurrencyCount: { type: integer }
+        types:
+          type: array
+          items: { $ref: '#/components/schemas/TransactionType' }
+        countries:
+          type: array
+          items: { $ref: '#/components/schemas/CountryOption' }
+        trips:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { $ref: '#/components/schemas/Id' }
+              name: { type: string }
+        dateRange:
+          type: object
+          required: [min, max]
+          properties:
+            min:
+              oneOf:
+                - { $ref: '#/components/schemas/Date' }
+                - { type: 'null' }
+            max:
+              oneOf:
+                - { $ref: '#/components/schemas/Date' }
+                - { type: 'null' }
+
+    CountryOption:
+      type: object
+      required: [code, count]
+      properties:
+        code: { $ref: '#/components/schemas/CountryCode' }
+        count: { type: integer }
+
+    TripSummary:
+      type: object
+      required: [id, name, currency, startDate, endDate, days, stats]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        currency: { $ref: '#/components/schemas/CurrencyCode' }
+        startDate: { $ref: '#/components/schemas/Date' }
+        endDate: { $ref: '#/components/schemas/Date' }
+        days: { type: integer }
+        stats:
+          type: object
+          required: [count, taggedCount, autoCount, billed, inTripCurrency]
+          properties:
+            count: { type: integer }
+            taggedCount: { type: integer }
+            autoCount: { type: integer }
+            billed: { $ref: '#/components/schemas/Money' }
+            inTripCurrency: { $ref: '#/components/schemas/Money' }
+
+    TripDetail:
+      type: object
+      required: [id, name, currency, startDate, endDate, days, stats, byCategory, byDay, tagged, auto, excluded]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        currency: { $ref: '#/components/schemas/CurrencyCode' }
+        startDate: { $ref: '#/components/schemas/Date' }
+        endDate: { $ref: '#/components/schemas/Date' }
+        days: { type: integer }
+        stats:
+          type: object
+          required: [billed, inTripCurrency, otherCurrencies, count, averagePerDay, commission, unknownCurrencyCount, outsideRange]
+          properties:
+            billed: { $ref: '#/components/schemas/Money' }
+            inTripCurrency: { $ref: '#/components/schemas/Money' }
+            otherCurrencies:
+              type: array
+              items: { $ref: '#/components/schemas/Money' }
+            count: { type: integer }
+            averagePerDay: { $ref: '#/components/schemas/Money' }
+            commission: { $ref: '#/components/schemas/Money' }
+            unknownCurrencyCount: { type: integer }
+            outsideRange:
+              type: object
+              required: [count, billed]
+              properties:
+                count: { type: integer }
+                billed: { $ref: '#/components/schemas/Money' }
+        byCategory:
+          type: array
+          items:
+            type: object
+            required: [category, billed, count]
+            properties:
+              category: { type: string }
+              billed: { $ref: '#/components/schemas/Money' }
+              count: { type: integer }
+        byDay:
+          type: array
+          items:
+            type: object
+            required: [date, billed]
+            properties:
+              date: { $ref: '#/components/schemas/Date' }
+              billed: { $ref: '#/components/schemas/Money' }
+        tagged:
+          type: array
+          items: { $ref: '#/components/schemas/TransactionListItem' }
+        auto:
+          type: array
+          items: { $ref: '#/components/schemas/TransactionListItem' }
+        excluded:
+          type: array
+          items: { $ref: '#/components/schemas/TransactionListItem' }
+
+    AnalysisTotals:
+      type: object
+      required: [net, gross, refunds, count, purchaseCount, refundCount, averagePerPurchase, monthlyAverage, original]
+      properties:
+        net: { $ref: '#/components/schemas/Money' }
+        gross: { $ref: '#/components/schemas/Money' }
+        refunds: { $ref: '#/components/schemas/Money' }
+        count: { type: integer }
+        purchaseCount: { type: integer }
+        refundCount: { type: integer }
+        averagePerPurchase: { $ref: '#/components/schemas/Money' }
+        monthlyAverage:
+          type: object
+          required: [value, completeBuckets, partialBuckets]
+          properties:
+            value:
+              oneOf:
+                - { $ref: '#/components/schemas/Money' }
+                - { type: 'null' }
+            completeBuckets: { type: integer }
+            partialBuckets: { type: array, items: { type: string } }
+        original:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+
+    AnalysisGroup:
+      type: object
+      required: [key, label, net, gross, count, sharePercent, averagePerPurchase, original, originalMixed, previous]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        net: { $ref: '#/components/schemas/Money' }
+        gross: { $ref: '#/components/schemas/Money' }
+        count: { type: integer }
+        sharePercent: { $ref: '#/components/schemas/Decimal' }
+        averagePerPurchase: { $ref: '#/components/schemas/Money' }
+        original:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        originalMixed: { type: boolean }
+        previous:
+          oneOf:
+            - type: object
+              required: [net, count]
+              properties:
+                net: { $ref: '#/components/schemas/Money' }
+                count: { type: integer }
+            - { type: 'null' }
+
+    TimePoint:
+      type: object
+      required: [key, start, end, net, complete]
+      properties:
+        key: { type: string }
+        start: { $ref: '#/components/schemas/Date' }
+        end: { $ref: '#/components/schemas/Date' }
+        net: { $ref: '#/components/schemas/Money' }
+        complete: { type: boolean }
+
+    SpendingAnalysis:
+      type: object
+      required: [range, comparisonRange, totals, comparisonTotals]
+      properties:
+        range:
+          $ref: '#/components/schemas/DateRange'
+        comparisonRange:
+          oneOf:
+            - { $ref: '#/components/schemas/DateRange' }
+            - { type: 'null' }
+        totals: { $ref: '#/components/schemas/AnalysisTotals' }
+        comparisonTotals:
+          oneOf:
+            - { $ref: '#/components/schemas/AnalysisTotals' }
+            - { type: 'null' }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/AnalysisGroup' }
+        timeSeries:
+          type: object
+          required: [bucket, average, points, previous]
+          properties:
+            bucket: { $ref: '#/components/schemas/Bucket' }
+            average: { $ref: '#/components/schemas/Money' }
+            points:
+              type: array
+              items: { $ref: '#/components/schemas/TimePoint' }
+            previous:
+              oneOf:
+                - type: object
+                  required: [average, points]
+                  properties:
+                    average: { $ref: '#/components/schemas/Money' }
+                    points:
+                      type: array
+                      items: { $ref: '#/components/schemas/TimePoint' }
+                - { type: 'null' }
+        matrix:
+          type: object
+          required: [rowDimension, bucket, columns, rows, columnTotals]
+          properties:
+            rowDimension: { $ref: '#/components/schemas/Dimension' }
+            bucket: { $ref: '#/components/schemas/Bucket' }
+            columns:
+              type: array
+              items:
+                type: object
+                required: [key, complete]
+                properties:
+                  key: { type: string }
+                  complete: { type: boolean }
+            rows:
+              type: array
+              items:
+                type: object
+                required: [key, label, cells, total]
+                properties:
+                  key: { type: string }
+                  label: { type: string }
+                  cells:
+                    type: array
+                    items:
+                      type: object
+                      required: [net, gross]
+                      properties:
+                        net: { $ref: '#/components/schemas/Money' }
+                        gross: { $ref: '#/components/schemas/Money' }
+                  total: { $ref: '#/components/schemas/Money' }
+            columnTotals:
+              type: array
+              items: { $ref: '#/components/schemas/Money' }
+
+    DateRange:
+      type: object
+      required: [from, to]
+      properties:
+        from: { $ref: '#/components/schemas/Date' }
+        to: { $ref: '#/components/schemas/Date' }
+
+    CurrencyValidationQueue:
+      type: object
+      required: [total, validated, pending, progressPercent, suggestionGroups, lowConfidenceCount, countries, currencyOptions]
+      properties:
+        total: { type: integer }
+        validated: { type: integer }
+        pending: { type: integer }
+        progressPercent: { $ref: '#/components/schemas/Decimal' }
+        suggestionGroups:
+          type: array
+          items:
+            type: object
+            required: [currency, count, rateMin, rateMax]
+            properties:
+              currency: { $ref: '#/components/schemas/CurrencyCode' }
+              count: { type: integer }
+              rateMin: { $ref: '#/components/schemas/Rate' }
+              rateMax: { $ref: '#/components/schemas/Rate' }
+        lowConfidenceCount: { type: integer }
+        countries:
+          type: array
+          items: { $ref: '#/components/schemas/CountryOption' }
+        currencyOptions:
+          type: array
+          description: Fixed list of currencies the user may choose (no "Other"). Validation with any other code → 422.
+          items: { $ref: '#/components/schemas/CurrencyCode' }
+
+    CurrencyValidationItem:
+      type: object
+      required: [id, transactionDate, merchant, country, originalAmount, billing, impliedRate, suggestion, validation]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        transactionDate: { $ref: '#/components/schemas/Date' }
+        merchant: { type: string }
+        country: { type: [string, 'null'] }
+        originalAmount: { $ref: '#/components/schemas/Decimal' }
+        billing: { $ref: '#/components/schemas/Money' }
+        impliedRate:
+          oneOf:
+            - { $ref: '#/components/schemas/Rate' }
+            - { type: 'null' }
+        suggestion:
+          oneOf:
+            - type: object
+              required: [currency, confidence, hint]
+              properties:
+                currency: { $ref: '#/components/schemas/CurrencyCode' }
+                confidence: { $ref: '#/components/schemas/Confidence' }
+                hint: { type: string }
+            - { type: 'null' }
+        validation:
+          oneOf:
+            - type: object
+              required: [currency, batchId, validatedAt]
+              properties:
+                currency: { $ref: '#/components/schemas/CurrencyCode' }
+                batchId: { $ref: '#/components/schemas/Id' }
+                validatedAt: { $ref: '#/components/schemas/Timestamp' }
+            - { type: 'null' }
+
+    CurrencyValidationFilter:
+      type: object
+      properties:
+        country: { type: array, items: { $ref: '#/components/schemas/CountryCode' } }
+        from: { $ref: '#/components/schemas/Date' }
+        to: { $ref: '#/components/schemas/Date' }
+        suggestedCurrency: { type: array, items: { $ref: '#/components/schemas/CurrencyCode' } }
+        confidence: { type: array, items: { $ref: '#/components/schemas/Confidence' } }
+        merchant:
+          type: array
+          description: Merchant name contains (OR).
+          items: { type: string }
+
+    CurrencyValidationBatchRequest:
+      type: object
+      description: Exactly one of transactionIds/filter and exactly one of currency/useSuggestion.
+      properties:
+        currency: { $ref: '#/components/schemas/CurrencyCode' }
+        useSuggestion: { const: true }
+        transactionIds:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Id' }
+        filter: { $ref: '#/components/schemas/CurrencyValidationFilter' }
+      allOf:
+        - oneOf:
+            - { required: [transactionIds] }
+            - { required: [filter] }
+        - oneOf:
+            - { required: [currency] }
+            - { required: [useSuggestion] }
+
+    CurrencyValidationBatch:
+      type: object
+      required: [id, validatedCount, transactionIds, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        validatedCount: { type: integer }
+        transactionIds:
+          type: array
+          items: { $ref: '#/components/schemas/Id' }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+
+    CustomCategory:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+
+    CategoryMapping:
+      type: object
+      required: [bankCategory, customCategory]
+      properties:
+        bankCategory: { type: string }
+        customCategory: { type: string }
+
+    CategoryRule:
+      type: object
+      required: [id, position, terms, category, stats]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        position: { type: integer }
+        terms: { type: array, items: { type: string } }
+        category: { type: string }
+        stats:
+          type: object
+          required: [matched, changed, keptByOverride, shadowed]
+          properties:
+            matched: { type: integer }
+            changed: { type: integer }
+            keptByOverride: { type: integer }
+            shadowed: { type: integer }
+
+    CategorizationOverview:
+      type: object
+      required: [bankCategories, rules, customCategories, resultingCategories]
+      properties:
+        bankCategories:
+          type: array
+          items:
+            type: object
+            required: [name, count, mappedTo]
+            properties:
+              name: { type: string }
+              count: { type: integer }
+              mappedTo: { type: [string, 'null'] }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/CategoryRule' }
+        customCategories:
+          type: array
+          items: { $ref: '#/components/schemas/CustomCategory' }
+        resultingCategories:
+          type: array
+          items:
+            type: object
+            required: [name, count]
+            properties:
+              name: { type: string }
+              count: { type: integer }
