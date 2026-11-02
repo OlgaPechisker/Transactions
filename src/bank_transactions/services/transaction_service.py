@@ -1,6 +1,6 @@
 """Transaction list, detail and filter options (read side)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from bank_transactions.domain.enums import ReviewReason
 from bank_transactions.domain.errors import InvalidQueryError, NotFoundError
@@ -52,7 +52,8 @@ TRANSACTION_SORT_FIELDS = (
 )
 
 
-# The repository orders by a dimension's group key for the sort field "group:<dimension>".
+# The repository orders by a dimension's group key for the sort field "group:<dimension>". Same
+# value as GROUP_SORT_PREFIX in providers/transaction_query.py, which this layer must not import.
 _GROUP_SORT_PREFIX = "group:"
 
 
@@ -71,7 +72,8 @@ class TransactionPage:
 
 @dataclass(frozen=True)
 class FilterOptionsView:
-    """`options` carries everything but the trips, which come from TripRepository.list."""
+    """`options` carries everything but the trips, which come from TripRepository.list; its
+    `cards` come from VisibleCardRepository.list_visible."""
 
     options: FilterOptionsRecord
     trips: tuple[TripRecord, ...]
@@ -126,9 +128,10 @@ class TransactionService:
 
     def filter_options(self, context: AuthContext) -> FilterOptionsView:
         with self._uow_factory.create(isolation=Isolation.REPEATABLE_READ) as uow:
-            options = uow.transaction_query.filter_options(context.user_id)
+            counts = uow.transaction_query.filter_options(context.user_id)
+            cards = uow.visible_cards.list_visible(context.user_id)
             trips = uow.trips.list(context.user_id)
-        return FilterOptionsView(options, trips)
+        return FilterOptionsView(replace(counts, cards=cards), trips)
 
 
 def _validate_filter(filter: TransactionFilter) -> None:

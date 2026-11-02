@@ -41,8 +41,9 @@ ROME = TripRecord(
 
 
 class WithTrips:
-    """A unit of work whose trips and visible cards come from stand-ins: both repositories are
-    other units' stubs in this branch. Everything else is the real unit of work."""
+    # TEMPORARY until U8: TripRepository.list is still a stub, so the trips come from a stand-in.
+    # Everything else, including the visible cards, is the real unit of work.
+    """A unit of work whose `trips` is a stand-in."""
 
     def __init__(self, uow: Any) -> None:
         self._uow = uow
@@ -64,16 +65,6 @@ class WithTrips:
                 return (ROME,)
 
         return Trips()
-
-    @property
-    def visible_cards(self) -> Any:
-        query = self._uow.transaction_query
-
-        class Cards:
-            def list_visible(self, user_id: int) -> Any:
-                return query.filter_options(user_id).cards
-
-        return Cards()
 
 
 class WithTripsFactory:
@@ -298,14 +289,26 @@ def test_a_group_without_a_value_has_its_default_label(pg_signed_in, ledger, dim
     assert (group["key"], group["label"], group["count"]) == (None, label, 4)
 
 
-def test_the_country_and_currency_groups_label_a_missing_value(pg_signed_in, ledger):
+def test_the_country_group_labels_a_missing_value(pg_signed_in, ledger):
+    response = pg_signed_in.client.get(LIST, params={"include": "groups", "groupBy": "country"})
+
+    assert {g["key"]: g["label"] for g in response.json()["groups"]}[None] == "Unknown country"
+
+
+def test_the_currency_groups_tell_unknown_currency_from_no_original_currency(pg_signed_in, ledger):
     client = pg_signed_in.client
 
-    countries = client.get(LIST, params={"include": "groups", "groupBy": "country"}).json()
-    currencies = client.get(LIST, params={"include": "groups", "groupBy": "currency"}).json()
+    response = client.get(LIST, params={"include": "groups", "groupBy": "currency"})
 
-    assert {g["key"]: g["label"] for g in countries["groups"]}[None] == "Unknown country"
-    assert {g["key"]: g["label"] for g in currencies["groups"]}[None] == "Unknown currency"
+    groups = {g["key"]: g for g in response.json()["groups"]}
+    assert {key: (g["label"], g["count"]) for key, g in groups.items()} == {
+        "USD": ("USD", 1),
+        "UNKNOWN": ("Unknown currency", 1),
+        None: ("No original currency", 2),
+    }
+    for key in ("USD", "UNKNOWN"):
+        filtered = client.get(LIST, params={"currency": key})
+        assert filtered.json()["meta"]["totalItems"] == groups[key]["count"]
 
 
 def test_a_card_group_is_labelled_with_the_card(pg_signed_in, ledger):

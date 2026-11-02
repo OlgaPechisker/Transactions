@@ -10,12 +10,12 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Date, Integer, Select, String, Subquery, and_, cast, false, func, or_, select
+from sqlalchemy import Integer, Select, String, Subquery, case, cast, false, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from bank_transactions.domain.enums import ReviewReason, TransactionType
-from bank_transactions.domain.ids import CardId, IdentifierToken, PublicId, TransactionId, UserId
+from bank_transactions.domain.ids import PublicId, TransactionId, UserId
 from bank_transactions.domain.queries import (
     NONE,
     UNKNOWN,
@@ -28,7 +28,7 @@ from bank_transactions.domain.queries import (
 )
 from bank_transactions.persistence.db import translates_database_errors
 from bank_transactions.persistence.interfaces import TransactionQueryRepository
-from bank_transactions.persistence.orm.models import CardRow, ClaimRow, OwnerRow, TransactionRow
+from bank_transactions.persistence.orm.models import TransactionRow
 from bank_transactions.persistence.records import (
     BillingSummaryRecord,
     BillingTotalRecord,
@@ -38,7 +38,6 @@ from bank_transactions.persistence.records import (
     NamedCountRecord,
     TransactionRef,
     TransactionViewRecord,
-    VisibleCardRecord,
 )
 from bank_transactions.persistence.visibility import (
     api_original_currency,
@@ -52,13 +51,11 @@ from bank_transactions.persistence.visibility import (
 __all__ = ["SqlTransactionQueryRepository"]
 
 # A sort field "group:<dimension>" orders by that dimension's group key, exactly like the groups
-# themselves are ordered. The service puts it first when the list is grouped.
+# themselves are ordered. The service puts it first when the list is grouped. The service keeps
+# its own copy of the prefix (layering forbids importing this module): keep the two in step.
 GROUP_SORT_PREFIX = "group:"
 
 _t = TransactionRow.__table__
-_cards = CardRow.__table__
-_claims = ClaimRow.__table__
-_owners = OwnerRow.__table__
 
 _PLAIN_SORT_COLUMNS = {
     "transactionDate": "transaction_date",
@@ -154,9 +151,9 @@ def _group_key(c: Any, dimension: Dimension) -> ColumnElement[Any]:
         case Dimension.CUSTOM_CATEGORY:
             return c.custom_category  # type: ignore[no-any-return]
         case Dimension.DAY:
-            return cast(c.transaction_date, String)
+            return func.to_char(c.transaction_date, "YYYY-MM-DD")
         case Dimension.WEEK:
-            return cast(cast(func.date_trunc("week", c.transaction_date), Date), String)
+            return func.to_char(func.date_trunc("week", c.transaction_date), "YYYY-MM-DD")
         case Dimension.MONTH:
             return func.to_char(c.transaction_date, "YYYY-MM")
         case Dimension.YEAR:
@@ -164,7 +161,10 @@ def _group_key(c: Any, dimension: Dimension) -> ColumnElement[Any]:
         case Dimension.CARD:
             return c.card_public_id  # type: ignore[no-any-return]
         case Dimension.CURRENCY:
-            return cast(c.original_currency, String)
+            # Pending rows are "UNKNOWN" (the currency filter value); domestic rows have no key.
+            return case(
+                (c.unknown_currency_visible, UNKNOWN), else_=cast(c.original_currency, String)
+            )
         case Dimension.MERCHANT:
             return c.merchant  # type: ignore[no-any-return]
         case Dimension.TYPE:
@@ -368,7 +368,7 @@ class SqlTransactionQueryRepository(TransactionQueryRepository):
         return FilterOptionsRecord(
             bank_categories=self._named(user_id),
             custom_categories=tuple(NamedCountRecord(name, count) for name, count in custom_counts),
-            cards=self._cards(user_id),
+            cards=(),  # the service fills them in from the visible-card repository
             original_currencies=self._coded(user_id, api_original_currency()),
             billing_currencies=self._coded(user_id, _t.c.billing_currency),
             countries=self._coded(user_id, _t.c.merchant_country),
@@ -402,35 +402,6 @@ class SqlTransactionQueryRepository(TransactionQueryRepository):
     def _named(self, user_id: UserId) -> tuple[NamedCountRecord, ...]:
         counts = self._counts(user_id, _t.c.bank_category_raw)
         return tuple(NamedCountRecord(name, count) for name, count in counts)
-
-    def _cards(self, user_id: UserId) -> tuple[VisibleCardRecord, ...]:
-        rows = self._session.execute(
-            select(
-                _cards.c.id,
-                _cards.c.public_id,
-                _cards.c.issuer_code,
-                _cards.c.last4_enc,
-                _cards.c.display_name,
-                _owners.c.display_name.label("owner_display_name"),
-            )
-            .select_from(
-                _cards.join(
-                    _claims, and_(_claims.c.id == _cards.c.claim_id, _claims.c.user_id == user_id)
-                ).join(_owners, _owners.c.id == _cards.c.owner_id)
-            )
-            .order_by(_cards.c.id)
-        ).all()
-        return tuple(
-            VisibleCardRecord(
-                card_id=CardId(row.id),
-                public_id=PublicId(row.public_id),
-                issuer_code=row.issuer_code,
-                last4_enc=IdentifierToken(bytes(row.last4_enc)),
-                nickname=row.display_name,
-                owner_display_name=row.owner_display_name,
-            )
-            for row in rows
-        )
 
     @translates_database_errors
     def bank_category_counts(self, user_id: UserId) -> tuple[NamedCountRecord, ...]:

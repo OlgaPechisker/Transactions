@@ -36,7 +36,7 @@ from bank_transactions.api.schemas.transactions import (
     TransactionSummaryDto,
     TripOptionDto,
 )
-from bank_transactions.domain.queries import Dimension, SortSpec, TransactionInclude
+from bank_transactions.domain.queries import UNKNOWN, Dimension, SortSpec, TransactionInclude
 from bank_transactions.services.card_service import CardView
 from bank_transactions.services.composition import ApiComposition
 from bank_transactions.services.read_models import (
@@ -59,7 +59,7 @@ _MISSING_LABELS = {
     Dimension.CUSTOM_CATEGORY: "No custom category",
     Dimension.COUNTRY: "Unknown country",
     Dimension.CARD: "No card",
-    Dimension.CURRENCY: "Unknown currency",
+    Dimension.CURRENCY: "No original currency",
     Dimension.TRIP: "No trip",
     Dimension.MERCHANT: "Unknown merchant",
     Dimension.TYPE: "Unknown type",
@@ -77,6 +77,8 @@ def _label_of(
     dimension: Dimension, key: str, present_card: CardPresent, result: TransactionPage
 ) -> str:
     match dimension:
+        case Dimension.CURRENCY if key == UNKNOWN:
+            return "Unknown currency"
         case Dimension.MONTH:
             year, month = key.split("-")
             return f"{_MONTHS[int(month) - 1]} {year}"

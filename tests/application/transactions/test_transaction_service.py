@@ -1,6 +1,6 @@
 """The transaction service: query validation, one snapshot per list, and detail visibility."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
@@ -46,7 +46,7 @@ GROUPS = (GroupRecord("2026-07", SUMMARY),)
 SUMMARY_AND_GROUPS = frozenset({TransactionInclude.SUMMARY, TransactionInclude.GROUPS})
 NEWEST_FIRST = SortSpec((("transactionDate", True),))
 ONE_PAGE = PageRequest(1, 50)
-NO_OPTIONS = FilterOptionsRecord((), (), (CARD,), (), (), (), (), 0, 0, None, None)
+NO_OPTIONS = FilterOptionsRecord((), (), (), (), (), (), (), 0, 0, None, None)
 
 
 def view(transaction_id: int, public_id: str) -> TransactionViewRecord:
@@ -216,7 +216,8 @@ def test_a_missing_or_foreign_transaction_is_not_found(service):
         service.get(BEN, PublicId("txn_1"))
 
 
-def test_filter_options_carry_the_trips_of_the_user(service):
+def test_filter_options_carry_the_visible_cards_and_the_trips_of_the_user(service):
     result = service.filter_options(ANN)
 
-    assert (result.options, result.trips) == (NO_OPTIONS, (TRIP,))
+    assert result.options == replace(NO_OPTIONS, cards=(CARD,))
+    assert result.trips == (TRIP,)

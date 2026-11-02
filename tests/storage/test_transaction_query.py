@@ -493,7 +493,7 @@ def test_groups_by_month_split_each_group_by_billing_currency(run, shop):
         (Dimension.WEEK, ["2026-06-29", "2026-07-20", "2026-07-27", "2026-08-10", "2026-08-17"]),
         (Dimension.CATEGORY, ["Pharmacy", "Restaurants", "Shopping", None]),
         (Dimension.COUNTRY, ["FR", "IL", "IT", None]),
-        (Dimension.CURRENCY, ["EUR", "USD", None]),
+        (Dimension.CURRENCY, ["EUR", "UNKNOWN", "USD", None]),
         (Dimension.TYPE, ["IMMEDIATE_CHARGE", "RECURRING", "REGULAR"]),
         (Dimension.CUSTOM_CATEGORY, [None]),
         (Dimension.TRIP, [None]),
@@ -508,6 +508,23 @@ def test_groups_are_keyed_by_the_dimension_value_with_a_null_key_last(run, shop,
 
     assert ordered == keys
     assert sum(group.summary.count for group in groups.values()) == 6
+
+
+def test_the_currency_groups_keep_pending_rows_apart_from_domestic_ones(run, shop):
+    groups, _ = grouped(run, shop.user, Dimension.CURRENCY)
+
+    assert groups["UNKNOWN"].summary.count == 1
+    assert groups["UNKNOWN"].summary.unknown_currency_count == 1
+    assert groups[None].summary.count == 3
+    assert groups[None].summary.unknown_currency_count == 0
+
+
+def test_a_currency_group_key_works_as_the_currency_filter(run, shop):
+    groups, _ = grouped(run, shop.user, Dimension.CURRENCY)
+
+    for key in ("EUR", "UNKNOWN", "USD"):
+        page = listed(run, shop.user, TransactionFilter(currencies=(key,)))
+        assert page.total == groups[key].summary.count
 
 
 def test_the_category_group_without_a_value_keeps_its_rows(run, shop):
@@ -566,10 +583,7 @@ def test_filter_options_describe_the_whole_dataset_of_the_user(run, shop, make_c
         ("Shopping", 1),
     ]
     assert [(o.name, o.count) for o in options.custom_categories] == [("Health", 2)]
-    assert [card.card_id for card in options.cards] == [
-        shop.pharm_card.card_id,
-        shop.travel_card.card_id,
-    ]
+    assert options.cards == ()  # the service adds the visible cards
     assert [(o.code, o.count) for o in options.original_currencies] == [("EUR", 1), ("USD", 1)]
     assert [(o.code, o.count) for o in options.billing_currencies] == [("ILS", 4), ("USD", 1)]
     assert [(o.code, o.count) for o in options.countries] == [("FR", 1), ("IL", 2), ("IT", 1)]
@@ -583,19 +597,12 @@ def test_filter_options_describe_the_whole_dataset_of_the_user(run, shop, make_c
     assert (options.date_min, options.date_max) == (date(2026, 7, 3), date(2026, 8, 20))
 
 
-def test_filter_options_list_a_claimed_card_without_transactions_and_an_empty_user_has_none(
-    run, seed_user, seed_claimed_card
-):
-    owner = seed_user("owner@example.com", "Owner")
-    card = seed_claimed_card(user=owner, last4="3333", owner_name="Owner O")
+def test_filter_options_of_a_user_without_transactions_are_empty(run, seed_user):
     nobody = seed_user("nobody@example.com", "Nobody")
 
-    mine = run(owner, lambda repository, user_id: repository.filter_options(user_id))
     empty = run(nobody, lambda repository, user_id: repository.filter_options(user_id))
 
-    assert [c.card_id for c in mine.cards] == [card.card_id]
-    assert mine.date_min is None and mine.date_max is None
-    assert (empty.cards, empty.bank_categories, empty.original_currencies, empty.types) == ((),) * 4
+    assert (empty.bank_categories, empty.original_currencies, empty.types) == ((),) * 3
     assert (empty.unknown_currency_count, empty.unknown_billing_currency_count) == (0, 0)
     assert (empty.date_min, empty.date_max) == (None, None)
 
