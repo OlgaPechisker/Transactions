@@ -11,7 +11,7 @@ class CurrencyEntry:
 class CurrencyCatalogue(ABC):
     @abstractmethod
     def codes(self) -> tuple[str, ...]:
-        """Every valid ISO 4217 alphabetic code, sorted."""
+        """Every valid ISO 4217 alphabetic code except XXX and XTS, sorted."""
 
     @abstractmethod
     def entries(self) -> tuple[CurrencyEntry, ...]:

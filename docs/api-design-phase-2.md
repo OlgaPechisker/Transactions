@@ -16,7 +16,7 @@ policies: [api-design-phase-1.md](api-design-phase-1.md). Wire contract (source 
 - **Same-file guard.** Partial unique index `ux_import_runs_running_sha (file_sha256) WHERE status='RUNNING'`; 23505 on audit start → `ImportInProgressError` → 409. `sweep_stuck_runs` frees stale RUNNING rows first. `file_path`/`file_name` stay NOT NULL and are filled from sha-derived audit labels (no filename). The import service takes `StatementUpload(bytes)` instead of `Path`.
 - **Undo evidence.** Immutable `currency_validation_batch_members(batch_id, transaction_id)` plus `currency_validation_batches.undone_at`. Undo is valid iff every member's `currency_validations.batch_id` equals the batch; `undone_at IS NOT NULL` → 204.
 - **Deduplication on source currency.** `transactions.source_original_currency` is set at insert and never changes; `_stored_group_counts` and inserts use it, because validation mutates `original_currency`.
-- **Question ids.** `iq_` + base32(HMAC-SHA256(HKDF(cipher key, "identity-question"), issuer‖canonical hint)), truncated to 128 bits. Deterministic and does not leak last-4.
+- **Question ids.** `iq_` + base32(HMAC-SHA256(HKDF(cipher key, "bt/iq"), issuer‖canonical hint)), truncated to 128 bits. Deterministic and does not leak last-4.
 - **Trip overlap** uses a per-user row lock (`SELECT … FROM users WHERE id=:u FOR UPDATE`) plus an overlap check; no `btree_gist` extension.
 - **CSRF token** is derived (HMAC of the session digest with an HKDF subkey of `BT_CIPHER_KEY`), not stored; no new secret variable.
 - **Visibility** goes through `cards.claim_id` (NOT NULL, composite FK to the claim's issuer/last-4/user) plus `user_id` on owners/accounts/cards.
