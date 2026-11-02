@@ -189,7 +189,7 @@ def test_the_reader_does_not_hide_unrelated_warnings():
 
 
 def test_open_bytes_reads_an_example_workbook_like_open_does():
-    example = next(EXAMPLES.glob("*.xlsx"))
+    example = EXAMPLES / "9462_02_2026.xlsx"
 
     assert ExcelWorkbookReader().open_bytes(example.read_bytes()) == ExcelWorkbookReader().open(
         example
