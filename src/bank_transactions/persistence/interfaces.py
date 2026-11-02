@@ -259,7 +259,10 @@ class ClaimRepository(ABC):
     def create_or_get(
         self, user_id: UserId, issuer_code: IssuerCode, last4_enc: IdentifierToken
     ) -> ClaimRecord:
-        """Claim the key for the user or return the existing claim (any owner)."""
+        """Claim the key for the user or return the user's existing claim.
+
+        Raises DataAlreadyOwnedError when another user already holds the claim.
+        """
 
     @abstractmethod
     def lock(self, issuer_code: IssuerCode, last4_enc: IdentifierToken) -> ClaimRecord | None:
