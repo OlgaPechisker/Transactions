@@ -1,14 +1,18 @@
-"""Request-scoped dependencies: authentication, CSRF, paging, sorting and transaction filters."""
+"""Request-scoped dependencies: authentication, CSRF, paging, sorting and transaction filters.
+
+Parsing here is syntax only (types, patterns, enums); what a filter means is checked by the
+domain and the services."""
 
 import calendar
 import hmac
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
 
 from fastapi import Depends, Header, Path, Query, Request
+from pydantic import StringConstraints
 
 from bank_transactions.domain.enums import CategorySource, ReviewReason, TransactionType
 from bank_transactions.domain.errors import AuthenticationError, CsrfError, InvalidQueryError
@@ -20,6 +24,10 @@ from bank_transactions.services.interfaces import AuthContext
 SESSION_COOKIE = "bt_session"
 CSRF_HEADER = "X-CSRF-Token"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_DECIMAL_PATTERN = r"^-?\d+(\.\d+)?$"
+
+CurrencyOrUnknown = Annotated[str, StringConstraints(pattern=r"^([A-Z]{3}|UNKNOWN)$")]
+CountryCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
 
 
 def composition(request: Request) -> ApiComposition:
@@ -59,8 +67,13 @@ def csrf_protected(
     csrf_token: Annotated[str | None, Header(alias=CSRF_HEADER)] = None,
 ) -> AuthContext:
     """Cookie-authenticated unsafe requests must echo the session's CSRF token."""
-    if request.method not in _SAFE_METHODS and request.state.via_cookie and (
-        csrf_token is None or not hmac.compare_digest(csrf_token, context.csrf_token)
+    if (
+        request.method not in _SAFE_METHODS
+        and request.state.via_cookie
+        and (
+            csrf_token is None
+            or not hmac.compare_digest(csrf_token.encode(), context.csrf_token.encode())
+        )
     ):
         raise CsrfError("Missing or invalid CSRF token")
     return context
@@ -73,20 +86,34 @@ def page_params(
     return PageRequest(page, page_size)
 
 
-def sort_param(allowed: Sequence[str], default: str) -> Callable[..., SortSpec]:
+def _parse_sort(request: Request, sort: str, allowed: Collection[str], single: bool) -> SortSpec:
+    if len(request.query_params.getlist("sort")) > 1:
+        raise InvalidQueryError(InvalidQueryError.INVALID_SORT, "sort must be given once")
+    fields: list[tuple[str, bool]] = []
+    for part in sort.split(","):
+        descending = part.startswith("-")
+        if part.removeprefix("-") not in allowed:
+            raise InvalidQueryError(InvalidQueryError.INVALID_SORT, "sort has an unsupported field")
+        fields.append((part.removeprefix("-"), descending))
+    if single and len(fields) != 1:
+        raise InvalidQueryError(InvalidQueryError.INVALID_SORT, "sort takes a single field")
+    return SortSpec(tuple(fields))
+
+
+def sort_param(allowed: Collection[str], default: str) -> Callable[..., SortSpec]:
     """Builds a dependency for the `sort` query: comma-separated fields, `-` for descending."""
 
-    def parse(sort: Annotated[str, Query()] = default) -> SortSpec:
-        fields: list[tuple[str, bool]] = []
-        for part in sort.split(","):
-            descending = part.startswith("-")
-            name = part.removeprefix("-")
-            if name not in allowed:
-                raise InvalidQueryError(
-                    InvalidQueryError.INVALID_SORT, f"Unknown sort field: {name}"
-                )
-            fields.append((name, descending))
-        return SortSpec(tuple(fields))
+    def parse(request: Request, sort: Annotated[str, Query()] = default) -> SortSpec:
+        return _parse_sort(request, sort, allowed, single=False)
+
+    return parse
+
+
+def single_sort_param(allowed: Collection[str], default: str) -> Callable[..., SortSpec]:
+    """Like `sort_param` for endpoints sortable by exactly one field; lists are INVALID_SORT."""
+
+    def parse(request: Request, sort: Annotated[str, Query()] = default) -> SortSpec:
+        return _parse_sort(request, sort, allowed, single=True)
 
     return parse
 
@@ -109,17 +136,17 @@ def include_param[E: StrEnum](
     return parse
 
 
-def _decimal(name: str, value: str | None) -> Decimal | None:
-    if value is None:
-        return None
-    result: Decimal | None
-    try:
-        result = Decimal(value)
-    except InvalidOperation:
-        result = None
-    if result is None or not result.is_finite():
-        raise InvalidQueryError(InvalidQueryError.INVALID_FILTER, f"{name} is not a number")
-    return result
+def _decimal(value: str | None) -> Decimal | None:
+    return None if value is None else Decimal(value)
+
+
+def _month_bounds(month: str) -> tuple[date, date]:
+    year, month_number = int(month[:4]), int(month[5:])
+    if year < 1 or not 1 <= month_number <= 12:
+        raise InvalidQueryError(InvalidQueryError.INVALID_FILTER, "month is not a month")
+    return date(year, month_number, 1), date(
+        year, month_number, calendar.monthrange(year, month_number)[1]
+    )
 
 
 def transaction_filter_params(
@@ -131,23 +158,32 @@ def transaction_filter_params(
     custom_category: Annotated[list[str] | None, Query(alias="customCategory")] = None,
     category_source: Annotated[list[CategorySource] | None, Query(alias="categorySource")] = None,
     card_id: Annotated[list[str] | None, Query(alias="cardId")] = None,
-    currency: Annotated[list[str] | None, Query()] = None,
-    billing_currency: Annotated[str | None, Query(alias="billingCurrency")] = None,
-    min_amount: Annotated[str | None, Query(alias="minAmount")] = None,
-    max_amount: Annotated[str | None, Query(alias="maxAmount")] = None,
+    currency: Annotated[list[CurrencyOrUnknown] | None, Query()] = None,
+    billing_currency: Annotated[
+        str | None, Query(alias="billingCurrency", pattern=r"^[A-Z]{3}$")
+    ] = None,
+    min_amount: Annotated[
+        str | None, Query(alias="minAmount", pattern=_DECIMAL_PATTERN, max_length=40)
+    ] = None,
+    max_amount: Annotated[
+        str | None, Query(alias="maxAmount", pattern=_DECIMAL_PATTERN, max_length=40)
+    ] = None,
     merchant: Annotated[list[str] | None, Query()] = None,
     type: Annotated[list[TransactionType] | None, Query()] = None,
-    country: Annotated[list[str] | None, Query()] = None,
+    country: Annotated[list[CountryCode] | None, Query()] = None,
     trip_id: Annotated[list[str] | None, Query(alias="tripId")] = None,
     needs_review: Annotated[bool | None, Query(alias="needsReview")] = None,
     review_reason: Annotated[list[ReviewReason] | None, Query(alias="reviewReason")] = None,
 ) -> TransactionFilter:
+    """`month` is ANDed with `from`/`to`: the filter covers their intersection."""
     if month is not None:
-        year, month_number = int(month[:4]), int(month[5:])
-        if not 1 <= month_number <= 12:
-            raise InvalidQueryError(InvalidQueryError.INVALID_FILTER, "month is not a month")
-        date_from = date(year, month_number, 1)
-        date_to = date(year, month_number, calendar.monthrange(year, month_number)[1])
+        first, last = _month_bounds(month)
+        date_from = first if date_from is None else max(date_from, first)
+        date_to = last if date_to is None else min(date_to, last)
+        if date_from > date_to:
+            raise InvalidQueryError(
+                InvalidQueryError.INVALID_FILTER, "month does not overlap the from/to range"
+            )
     try:
         return TransactionFilter(
             date_from=date_from,
@@ -159,8 +195,8 @@ def transaction_filter_params(
             card_ids=tuple(PublicId(value) for value in card_id or ()),
             currencies=tuple(currency or ()),
             billing_currency=billing_currency,
-            min_amount=_decimal("minAmount", min_amount),
-            max_amount=_decimal("maxAmount", max_amount),
+            min_amount=_decimal(min_amount),
+            max_amount=_decimal(max_amount),
             merchants=tuple(merchant or ()),
             types=tuple(type or ()),
             countries=tuple(country or ()),
@@ -182,3 +218,4 @@ TransactionIdPath = Annotated[PublicId, Path(alias="transactionId")]
 TripIdPath = Annotated[PublicId, Path(alias="tripId")]
 BatchIdPath = Annotated[PublicId, Path(alias="batchId")]
 RuleIdPath = Annotated[PublicId, Path(alias="ruleId")]
+PublicIdPath = Annotated[PublicId, Path()]
