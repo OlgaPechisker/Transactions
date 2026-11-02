@@ -1,6 +1,6 @@
 # Sequence & Structure Diagrams — `bank_transactions`
 
-> Companion to `plan.md`. Copied to `docs/sequence-diagram.md` during implementation.
+> Diagrams of the implemented importer. Companion to [importer-design.md](importer-design.md), which holds the written design and behavior rules.
 
 ## 1. Main import sequence
 
@@ -497,19 +497,3 @@ classDiagram
 
 Note the direction of the arrows: the **parsers** own the shared algorithms, and only the **import service** touches repositories and the unit of work. No arrow runs from a parser to a repository. `StatementImportService` depends only on the interface classes (`WorkbookReader`, `ParserSelector`, `IdentifierProtector`, `IdentityResolver`, `UnitOfWork`); the concrete adapters (`ExcelWorkbookReader`, `ParserRegistry`, `IdentifierCipher`) each realize their port and are wired in by `bootstrap.py`, which is the only place that references both the abstractions and the concrete adapters together.
 
----
-
-## Implementation decisions approved after the plan
-
-The sections above are the original design, unchanged. The implementation follows them except where the notes below record an approved decision.
-
-1. **One live unit of work for identity and domain data.** The identity gate, the plan upserts and the transaction insertion share a single `UnitOfWork`. Card identities are flushed (so they receive real ids) before `read_transactions` runs. A normal run commits that unit once, after insertion. A dry run always rolls the whole unit back, including identities the run created. The audit record is written through separate, independent units of work and is always committed.
-2. **Reference keys include the installment number.** A reference key is the issuer, card, reference number and installment number. A missing installment number is a value equal to another missing one (`NULL` semantics for storage: `NULLS NOT DISTINCT`). Of repeated reference keys inside one file, the first is selected and the later copies are duplicates. Rows without a reference are deduplicated by multiplicity: the whole incoming group is compared with the stored count before any insertion, `max(0, incoming - existing)` rows are inserted, and stored rows are never updated or deleted.
-3. **Per-card identity questions.** The gate resolves every card in the file before any transaction is read. A card with exactly one consistent stored candidate is reused without a question, even when the file omits identity hints. With more than one consistent candidate, or none, the resolver receives an `IdentityQuestion` with explicit choices; the service never picks the first. A non-interactive run collects every unresolved card, rolls back all identity changes and returns `NEEDS_INPUT` without parsing a row.
-4. **Account lookup returns every match.** `AccountRepository.find_by_number(bank_code, encrypted_number)` returns a tuple (none, one or many, ordered by id), because different or unknown banks may reuse the same digits. An account is determined only when exactly one match is consistent with the owner; otherwise the user is asked.
-5. **Max identity column scan.** Max statements carry the card last-4 in a column rather than in a banner; the Max parser scans that identity column and reports one card per distinct value.
-6. **Ciphertext only.** Card last-4 values and account numbers are encrypted with `encrypt(kind, value)` / `decrypt(kind, token)`, bound to the identifier type, before any command reaches a repository. Owner, account and card labels that contain a known identifier are rejected, and reports, audit rows and failure summaries never contain plaintext identifiers.
-7. **Report and audit counts.** `rows_total` is the number of data rows read (banners, footers and blank rows excluded). `rows_skipped` is rows read minus transactions produced (pending, malformed and folded fee rows). `duplicates` is valid rows minus selected rows. On a dry run the report shows the proposed counts with `dry_run=True`, while the audit row records `rows_imported=0` and a summary starting "DRY RUN: nothing was committed", so the audit never claims rows that were not committed.
-8. **Declared totals are a warning only.** The declared totals are compared with all valid charged rows before deduplication. A mismatch adds a warning, an issue note and an error-summary note; it does not force `PARTIAL`. A file that declares no totals reports the check as unavailable. `PARTIAL` is set only by `ERROR` issues.
-9. **Failure handling.** After the run is started, every failure ends in a terminal audit record: `NEEDS_INPUT` for unresolved identities, otherwise the domain unit is rolled back and a separate committed `FAILED` record is written before the error is re-raised. A record that was already finished (for example swept as stale) is never overwritten. Summaries never contain the text of untrusted errors.
-10. **Two-digit year window.** `BT_TWO_DIGIT_YEARS_BACK` (default 80) selects the 100-year window `[anchor - back, anchor + 99 - back]` for two-digit years; the statement anchor priority is unchanged.

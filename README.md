@@ -4,8 +4,11 @@ Parses Israeli credit-card statement workbooks (Isracard, Max, Cal) and stores n
 transactions in PostgreSQL. Card last-4 digits and bank account numbers are encrypted before they
 reach the database; the library imports, deduplicates and audits each file.
 
-See [docs/sequence-diagram.md](docs/sequence-diagram.md) for the design and the decisions taken
-during implementation.
+See [docs/importer-design.md](docs/importer-design.md) for the design and behavior rules,
+[docs/sequence-diagram.md](docs/sequence-diagram.md) for the diagrams, and
+[docs/api-design-phase-1.md](docs/api-design-phase-1.md) for the planned REST API (not yet implemented;
+detailed plan in [docs/api-design-phase-2.md](docs/api-design-phase-2.md), wire contract in
+[docs/api-contract/](docs/api-contract/)).
 
 ## Install
 

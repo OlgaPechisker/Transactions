@@ -1,10 +1,10 @@
 # REST API contract – UI ↔ backend
 
-Status: **current V1 planning contract; approved policies synchronized**. Machine-readable version: [`openapi.yaml`](openapi.yaml). Data mapping: [`screen-to-data-map.md`](screen-to-data-map.md). Architecture: [`Phase 1`](../api-design-phase-1.md).
+Status: **current V1 contract; implementation not started**. Machine-readable version: [`openapi.yaml`](openapi.yaml). Data mapping: [`screen-to-data-map.md`](screen-to-data-map.md). Architecture: [`Phase 1`](../api-design-phase-1.md). Implementation plan: [`Phase 2`](../api-design-phase-2.md).
 
-This is the canonical API proposal, not a decision-history document. New persistence is required for users, ownership claims, sessions, trips, categories, and currency-validation audit.
+This is the canonical API contract. New persistence is required for users, ownership claims, sessions, trips, categories, and currency-validation audit.
 
-**Planning boundary:** approved policies and field shapes are reflected here and in OpenAPI. The reviewed wire-contract gaps are closed. Exact provider interfaces, DDL, and implementation plans remain gated.
+**Implementation status:** not started. Exact provider interfaces, DDL, and the work breakdown are in [Phase 2](../api-design-phase-2.md). Phase 2 §A lists contract amendments the implementation applies first (nullable `ImportIssue.sheetPosition`/`row`, owner-name fallback).
 
 **Out of scope for v1:** sharing between users (invitations, "Shared with me", merged view, view-mode preference). Every endpoint returns and changes only the caller's own data.
 

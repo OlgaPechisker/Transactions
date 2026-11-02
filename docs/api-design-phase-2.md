@@ -1,67 +1,36 @@
-# Phase 1 review + Phase 2 detailed plan — REST API (`/api/v1`)
+# Phase 2 - REST API (`/api/v1`) detailed plan
 
-> **Deliverable location:** on approval, this plan is saved verbatim to `docs/api-design-phase-2.md`, next to `docs/api-design-phase-1.md`. Saving it is the only action taken; no application code is touched.
+**Status: approved plan; implementation has not started.** Architecture and
+policies: [api-design-phase-1.md](api-design-phase-1.md). Wire contract (source of truth):
+`api-contract/{api-contract.md, openapi.yaml, screen-to-data-map.md}`. Baseline schema:
+`persistence/orm/models.py` + `migrations/versions/0001_initial_schema.py`.
 
-Inputs: `docs/api-contract/{api-contract.md, openapi.yaml, screen-to-data-map.md}` (source of truth),
-`docs/api-design-phase-1.md` (Phase 1), schema `persistence/orm/models.py` + `migrations/versions/0001_initial_schema.py`.
-User decisions (this session): ownerName falls back to the app user's name; ImportIssue `sheetPosition`/`row` become
-nullable (contract amendment); user-visible UNKNOWN_CURRENCY = queue-eligible only; **rewrite 0001** (fresh DB);
-missing-group keys for other dimensions = `null` + open question for labels.
+## A. Decisions that shape the plan
 
----
-
-# A. Review report
-
-## Verdict: **Approved with changes**
-
-Phase 1 is sound in scope, layering and policy, and every decision traces back to the contract.
-It is not concrete enough to implement. Four areas are fixed below: user scoping, placeholder
-identities, the visible UNKNOWN_CURRENCY definition, and undo evidence. No blocker depends on an
-unanswered question; the remaining open questions (§B.9) all have safe defaults.
-
-## Findings
-
-| # | Sev | Area | Issue | Evidence | Required change |
-|---|---|---|---|---|---|
-| 1 | major | Contract / domain | Parser adds UNKNOWN_CURRENCY when *billing* currency is null **or** an original amount has no currency, including on domestic rows. The queue only covers foreign rows with a missing original currency. Raw reason counts (`needsReview`, `/me` counters, `needsReview` filter) would include rows the queue can never clear. Phase 1 counts stored reasons. | `parsing/banks/tabular_base.py:185-188`; openapi `/currency-validation-queue` desc (l.607-609); `ImportCounts.needsReview` (openapi ~1229); Phase 1 §5.4 | A row is user-visible UNKNOWN_CURRENCY only when it has a pending reason row, a `foreign_transaction_details` row, and `original_currency IS NULL`. One shared SQL predicate is used by every counter and filter. The import report count applies the same predicate in memory (`fx is not None and original.currency is None`). |
-| 2 | major | Contract / schema | `CardRef.ownerName` and `Card.owner.name` are required strings, but CREATE_CARD can create an owner with no name in the file (Max/Cal give no owner hint). Phase 1 introduces placeholders without saying what the API shows for them. | openapi 1158-1178; `parsing/banks/isracard.py:91` (only Isracard gives OwnerHint); Phase 1 §5.2 | Placeholder owners have `display_name NULL`. The API falls back to the caller's `users.display_name` (decision). The card `label` uses the same fallback. |
-| 3 | major | Contract | `ImportIssue.sheetPosition`/`row` are required, yet TOTALS_MISMATCH (in the enum) is created with no location. | openapi 1212-1222; `services/import_service.py:294` (`RowIssue(None, …)`) | Contract amendment: `sheetPosition`/`row` become `[integer, 'null']`, always present (decision). Update openapi.yaml and api-contract.md §5.1. |
-| 4 | major | Schema | Owner/account uniqueness is global. Phase 1 says "scoped" but names no columns. | `orm/models.py:61` (`uq_owners_match_key`), `:76` (`uq_accounts_bank_code_account_number_enc`); Phase 1 §3 row 4 | Add `user_id NOT NULL` to owners, accounts and cards. Scoped uniques: `(user_id, match_key)`, `(user_id, bank_code, account_number_enc)`. Composite FKs keep card ↔ owner ↔ account ↔ claim in the same user (§B.6). |
-| 5 | major | Domain (import) | The identity gate lists **all** owners/accounts and searches card candidates across all users. That leaks other users' identities into questions. | `services/identity_gate.py:104,113,149-151`; `persistence/repositories.py:249` | Every identity lookup takes a `UserId`, and `CardLookup` gains `user_id`. Questions list only the caller's claimed cards. The owner/account choice lists are removed from API questions (API CREATE_CARD carries only a nickname). |
-| 6 | major | Domain (import) | API `CREATE_CARD` supplies only `nickname`, but domain `CreateCard` needs owner and account choices when evidence doesn't determine them. `owners.display_name` and `accounts.owner_id` are NOT NULL. Phase 1 says "explicit unresolved placeholders" with no mechanism. | `identity_gate.py:207-307`; `orm/models.py:57`; api-contract §5.1 | Resolution order: evidence owner/account → else a per-user placeholder owner (`display_name NULL`, `match_key NULL`, one per user via a partial unique index) → else a per-owner placeholder account (bank_code and number NULL, one per owner via a partial unique index). No fabricated identifiers. |
-| 7 | major | Contract mapping | Import outcome mapping is incomplete: when is it 201 FAILED vs 422? What order do the 409 claim conflict and NEEDS_INPUT follow? | api-contract §5.1 errors; openapi `ImportResult.issuer` (required) | Order: 413 → 415 → 422 selections syntax → 409 IMPORT_IN_PROGRESS (audit start) → open workbook (failure → 422 UNREADABLE_WORKBOOK + FAILED audit) → detect (UnknownFormatError → 422 UNKNOWN_STATEMENT_FORMAT + FAILED audit) → parse error after detection → **201 FAILED** (issuer known) → claim conflict on any file card key → 409 DATA_ALREADY_OWNED (before questions, §1.3 says the key "cannot be imported") → selection referencing an unknown/inaccessible card → 404 / unknown question → 422 → unresolved → 201 NEEDS_INPUT → 201 SUCCESS/PARTIAL. |
-| 8 | major | Schema / concurrency | The same-file in-progress guard has no mechanism. `import_runs.file_path/file_name` (NOT NULL) assume a filesystem path, but the API receives bytes. There is no sha index. | `orm/models.py:109-110,128`; `import_service.py:95-110`; Phase 1 §5.3 | Partial unique index `ux_import_runs_running_sha (file_sha256) WHERE status='RUNNING'`. A 23505 on audit start → `ImportInProgressError` → 409. The existing `sweep_stuck_runs` frees stale RUNNING rows first. Keep the label columns, filled from `audit_labels` with sha-derived values (no filename). The import service takes a `StatementUpload(bytes)` input instead of `Path`. |
-| 9 | major | Schema (undo) | Undo evidence is "membership or equivalent": vague. `currency_validations` is keyed by transaction and deleted on move-back, so it cannot be the evidence. Nothing distinguishes "already undone" (204) from "member changed" (409). | openapi 690-712 desc; Phase 1 §3 rows 13-14, §5.5 | Add `currency_validation_batch_members(batch_id, transaction_id)` (immutable) and `currency_validation_batches.undone_at`. Undo is valid iff every member's `currency_validations.batch_id` = this batch. `undone_at IS NOT NULL` → 204. |
-| 10 | major | Dedup | **Confirmed Phase 1:** dedup group counts compare `original_currency`, which validation mutates, so re-imports would insert duplicates. | `repositories.py:412-420,466` | Add `source_original_currency` and switch `_stored_group_counts` and inserts to it. (Phase 1 is correct; this records that it was verified.) |
-| 11 | minor | Dependencies | Phase 1 flags fastapi/uvicorn/argon2/pycountry but **not `python-multipart`**, which FastAPI needs for `multipart/form-data`. `httpx` is needed for `TestClient`. | `pyproject.toml` deps; openapi 158-176 | Flag: `fastapi`, `uvicorn[standard]`, `python-multipart`, `argon2-cffi`, `pycountry` (runtime); `httpx` (dev). |
-| 12 | minor | Contract | `Location: /api/v1/imports/{id}` and batch `Location` point at URLs with no GET. | api-contract §5.1 vs "GET /imports/{id} intentionally not defined" (§5.2 end) | Emit the header as written; record as a contract quirk (OQ-1). |
-| 13 | minor | Contract | Missing-group keys/labels are defined only for category, customCategory and country. trip/card/currency/merchant/type can also be missing (no trip, unknown currency). | api-contract §1.9 "Missing groups" | `key: null` for these too; label open (OQ-2). |
-| 14 | minor | Contract | Trip auto membership "same original currency" uses the stored literal, so domestic rows carrying an ILS original could join an ILS trip. The API exposes `original: null` for domestic rows. | openapi 427-431 (getTrip desc); `tabular_base.py` domestic originals | Default: match on the **API-visible** original currency (foreign rows only). OQ-3. |
-| 15 | minor | Contract | 404 for `PUT/DELETE /category-mappings/{bankCategory}` has no stated meaning. | openapi 770-812 | Default: 404 when the bank category doesn't occur on any caller-visible transaction (PUT), or no mapping exists (DELETE). OQ-4. |
-| 16 | minor | Contract | Login throttle details are unspecified: rolling vs fixed window, reset on success, `Retry-After`. | api-contract §1.2 | Default: rolling 15-minute count of failures per key, no reset on success, `Retry-After` header set. OQ-5. |
-| 17 | minor | Security | A "hash of issuer + card hint" question id is brute-forceable (last4 space = 10⁴), so it leaks last4. | openapi 1197-1199 | `iq_` + base32(HMAC-SHA256(HKDF(cipher key,"identity-question"), issuer‖canonical hint)), truncated to 128 bits. Still deterministic. |
-| 18 | minor | Contract | Trips `sort` allows `name/-name` in openapi, but api-contract §7.1 lists fewer. Card shape inconsistency (`ownerName` vs `owner.name`). | openapi 372; api-contract §1.9 vs §4.1 | Follow openapi (superset). Implement both shapes as written. |
-| 19 | minor | Contract | Nickname `""`/whitespace and bucket=day range limit are unspecified. | openapi 125-127, 568-575 | Defaults: trim; empty → `null`; no day-range cap. OQ-6, OQ-7. |
-| 20 | minor | Migration | Phase 1 leaves the revision layout open. Existing migration tests assert the global account unique and the table/enum sets. | `tests/storage/test_migrations.py` (DOMAIN_TABLES, ENUMS, `test_accounts_only_have_the_source_ddl_unique_constraints`) | Rewrite 0001 (decision). Update those tests. The downgrade is explicitly destructive. |
-| 21 | minor | Architecture | Phase 1 diagram is compliant: endpoints → services → providers. `ProfileService` → `CurrencyValidationProvider` is service→provider, which is fine. Gaps: the import-graph contract test doesn't yet cover an `api/` package, and the import service reads a `Path`. | `tests/contracts/test_import_graph.py`; `import_service.py:95-110` | Add `api` rules: `api` must not import sqlalchemy/psycopg/persistence.*; services must not import fastapi/starlette/pydantic. Bytes-based `WorkbookReader.open_bytes`. |
-
-## Corrections applied in Phase 2
-C1 visible-review predicate (#1) · C2 owner-name fallback + nullable placeholder owner (#2, #6) · C3 nullable ImportIssue location (#3)
-· C4 `user_id` scoping + composite FKs (#4, #5) · C5 placeholder resolution order (#6) · C6 import outcome order (#7)
-· C7 running-sha partial unique index + bytes input (#8) · C8 batch members + `undone_at` (#9) · C9 dedup on source currency (#10)
-· C10 dependency list (#11) · C11 HMAC question ids (#17) · C12 rewrite 0001 + test updates (#20) · C13 import-graph rules (#21).
-
-## Phase 2 deviations from Phase 1
-- Trip overlap uses **per-user row lock** (`SELECT … FROM users WHERE id=:u FOR UPDATE`) + overlap check, not a `btree_gist` exclusion constraint. This avoids a DB extension.
-- The CSRF token is **derived** (HMAC of the session digest using an HKDF subkey of `BT_CIPHER_KEY`), not stored. This needs no new secret variable.
-- Owners: `display_name` and `match_key` become nullable (placeholder). Phase 1 kept them required.
-- Visibility goes through `cards.claim_id` (NOT NULL, composite FK to the claim's issuer/last4/user), plus `user_id` on owners/accounts/cards.
-- Providers follow the existing convention: repository ABCs exposed on `UnitOfWork`, which owns the transaction. There are no standalone provider objects.
-- Added CLI `create-user` for administrative provisioning (the contract has no registration endpoint; Phase 1 left provisioning unspecified).
+- **User scoping.** `user_id` on owners, accounts and cards, with scoped uniques and composite FKs (§B.6). Every identity lookup takes a `UserId`; identity questions list only the caller's claimed cards and never other users' owners or accounts.
+- **Placeholder identities.** `CREATE_CARD` carries only a nickname. Resolution order: evidence owner/account → per-user placeholder owner (`display_name NULL`, `match_key NULL`, one per user via partial unique index) → per-owner placeholder account (`bank_code`, number NULL, one per owner via partial unique index). No fabricated identifiers.
+- **Owner name.** `CardRef.ownerName` and `Card.owner.name` fall back to the caller's `users.display_name` for placeholder owners; the card label uses the same fallback.
+- **Visible UNKNOWN_CURRENCY.** A row is user-visible UNKNOWN_CURRENCY only when it has a pending reason row, a `foreign_transaction_details` row, and `original_currency IS NULL`. One shared SQL predicate serves every counter and filter; the import report applies the same predicate in memory (`fx is not None and original.currency is None`).
+- **Nullable import issue location.** `ImportIssue.sheetPosition`/`row` are `[integer, 'null']`, always present (TOTALS_MISMATCH has no location).
+- **Import outcome order.** 413 → 415 → 422 selections syntax → 409 IMPORT_IN_PROGRESS (audit start) → open workbook (failure → 422 UNREADABLE_WORKBOOK + FAILED audit) → detect (`UnknownFormatError` → 422 UNKNOWN_STATEMENT_FORMAT + FAILED audit) → parse error after detection → 201 FAILED (issuer known) → claim conflict on any file card key → 409 DATA_ALREADY_OWNED (before questions) → selection referencing an unknown/inaccessible card → 404 / unknown question → 422 → unresolved → 201 NEEDS_INPUT → 201 SUCCESS/PARTIAL.
+- **Same-file guard.** Partial unique index `ux_import_runs_running_sha (file_sha256) WHERE status='RUNNING'`; 23505 on audit start → `ImportInProgressError` → 409. `sweep_stuck_runs` frees stale RUNNING rows first. `file_path`/`file_name` stay NOT NULL and are filled from sha-derived audit labels (no filename). The import service takes `StatementUpload(bytes)` instead of `Path`.
+- **Undo evidence.** Immutable `currency_validation_batch_members(batch_id, transaction_id)` plus `currency_validation_batches.undone_at`. Undo is valid iff every member's `currency_validations.batch_id` equals the batch; `undone_at IS NOT NULL` → 204.
+- **Deduplication on source currency.** `transactions.source_original_currency` is set at insert and never changes; `_stored_group_counts` and inserts use it, because validation mutates `original_currency`.
+- **Question ids.** `iq_` + base32(HMAC-SHA256(HKDF(cipher key, "identity-question"), issuer‖canonical hint)), truncated to 128 bits. Deterministic and does not leak last-4.
+- **Trip overlap** uses a per-user row lock (`SELECT … FROM users WHERE id=:u FOR UPDATE`) plus an overlap check; no `btree_gist` extension.
+- **CSRF token** is derived (HMAC of the session digest with an HKDF subkey of `BT_CIPHER_KEY`), not stored; no new secret variable.
+- **Visibility** goes through `cards.claim_id` (NOT NULL, composite FK to the claim's issuer/last-4/user) plus `user_id` on owners/accounts/cards.
+- **Providers** are repository ABCs exposed on `UnitOfWork`, which owns the transaction; there are no standalone provider objects.
+- **Provisioning.** CLI `create-user` creates users administratively (no registration endpoint).
+- **Schema rollout.** Rewrite `0001` for a fresh database and update the migration tests.
+- **Contract choices.** Trips `sort` follows openapi (superset of api-contract §7.1); both card shapes (`ownerName`, `owner.name`) are implemented as written. `Location` headers on imports and batches are emitted as specified even though no GET exists for them. Missing groups for trip/card/currency/merchant/type dimensions use `key: null`.
+- **Dependencies:** `fastapi`, `uvicorn[standard]`, `python-multipart`, `argon2-cffi`, `pycountry` (runtime); `httpx` (dev).
+- **Architecture tests:** `api` must not import sqlalchemy/psycopg/`persistence.*`; services must not import fastapi/starlette/pydantic. `WorkbookReader.open_bytes` replaces the path-based entry point for the API.
 
 ---
 
-# B. Phase 2 detailed plan
+# B. Detailed plan
+
 
 ## B.1 Package layout (follows existing conventions)
 ```
@@ -107,7 +76,7 @@ Endpoints are **sync `def`**, so FastAPI runs them in its bounded threadpool. Se
 - **Card label** (domain `card_labels.py`): `f"{owner_name or user_name} · {issuer_title} ••{last4}"` (issuer titles Isracard/Max/Cal). last4 is decrypted through the existing `IdentifierProtector` port and cached per request.
 - **Visibility** (`persistence/visibility.py`): `transactions t JOIN cards c ON c.id=t.card_id JOIN card_ownership_claims k ON k.id=c.claim_id AND k.user_id=:u`. Every read and write on transactions, cards, imports, trips, categories and validations goes through it.
 - **Effective category** (SQL, one CTE): `COALESCE(ov.name, rule.name, map.name, t.bank_category_raw)` with source `OVERRIDE|RULE|MAPPING|BANK`. The rule is a LATERAL lookup: newest `category_rules.id` with any `term_norm` that is a substring of `t.merchant_name_norm` (`strpos > 0`). Terms are normalized with the same normalizer as `merchant_name_norm`.
-- **Visible review predicate (C1)**: `EXISTS trr(reason='UNKNOWN_CURRENCY') AND EXISTS ftd AND t.original_currency IS NULL`.
+- **Visible review predicate**: `EXISTS trr(reason='UNKNOWN_CURRENCY') AND EXISTS ftd AND t.original_currency IS NULL`.
 - **Dependencies (flagged, new)**: fastapi, uvicorn[standard], python-multipart, argon2-cffi, pycountry; dev: httpx.
 
 ## B.3 Endpoints → Domain → Provider (all 31 operations)
@@ -139,11 +108,11 @@ All services raise domain errors only. All routes except sign-in require auth. �
      - (c) `reader.open_bytes`;
      - (d) a user-scoped `IdentityGate(user_id)`;
      - (e) claim check;
-     - (f) API selections mapped to domain `UseCard`/`CreateCard(nickname)` with the placeholder resolution order (C5);
-     - (g) report → counts with `needsReview` via `domain/review.py` (C1);
-     - (h) issues mapped with nullable location (C3);
-     - (i) the outcome order of finding #7.
-   Question ids come from `TokenService.question_id(issuer, hint)` (C11). A selection with an unknown questionId → 422 (field `identitySelections[i].questionId`, code `UNKNOWN_QUESTION`). A USE_EXISTING_CARD cardId not among the caller's visible cards → 404. A nickname > 120 → 422. A dry run rolls back the domain UoW (existing behavior), including claims.
+     - (f) API selections mapped to domain `UseCard`/`CreateCard(nickname)` with the placeholder resolution order (§A);
+     - (g) report → counts with `needsReview` via `domain/review.py` (visible review predicate);
+     - (h) issues mapped with nullable location;
+     - (i) the import outcome order (§A).
+   Question ids come from `TokenService.question_id(issuer, hint)`. A selection with an unknown questionId → 422 (field `identitySelections[i].questionId`, code `UNKNOWN_QUESTION`). A USE_EXISTING_CARD cardId not among the caller's visible cards → 404. A nickname > 120 → 422. A dry run rolls back the domain UoW (existing behavior), including claims.
    P (inside the domain UoW): `ClaimRepository.find(issuer, last4_enc) -> ClaimRecord|None`, `.create_or_get(user_id, issuer, last4_enc) -> ClaimRecord` (`INSERT … ON CONFLICT (issuer_code,last4_enc) DO NOTHING RETURNING`, else `SELECT … FOR UPDATE`). A claim owned by another user → `DataAlreadyOwnedError` (409). `SELECT … FOR UPDATE` on existing claims serializes overlapping files on the same card key before dedup counting. `OwnerRepository.find_placeholder(user_id)/create_placeholder`, `AccountRepository.find_placeholder(owner_id)/create_placeholder`. Existing repos gain the `user_id` param. `ImportRunRepository.start_run` translates 23505 on `ux_import_runs_running_sha` → `ImportInProgressError`; it sets `public_id`.
 7. **GET /imports** — E: `page,pageSize,sort∈{startedAt,-startedAt}` → 200 paginated `ImportSummary`. D: `ImportApiService.history(ctx, PageRequest, sort)`. P: `ImportHistoryRepository.page(user_id, page, size, descending) -> Page[ImportSummaryRecord]`:
    `SELECT r.public_id, r.file_sha256, r.started_at, r.status, count(t.id) FROM import_runs r JOIN visible_transactions t ON t.import_run_id=r.id WHERE r.status IN ('SUCCESS','PARTIAL') GROUP BY r.id ORDER BY r.started_at {dir}, r.id {dir}`. `rowsImported` = visible inserted count. Dry runs never commit transactions, so the join excludes them.
@@ -499,12 +468,12 @@ repository. `UnitOfWorkFactory.create(isolation=READ_COMMITTED|REPEATABLE_READ)`
 
 | Unit | Scope (operations / concerns) | Owns (exclusive) | Provides | Consumes | Gates |
 |---|---|---|---|---|---|
-| **U0 Contract freeze & skeleton** | K1–K9 signatures; stubs for every repository, service and router; DI wiring in `bootstrap.build_api_composition`; `pyproject` deps; contract-doc amendment (C3, ownerName note, OQ defaults); import-graph test rules (C13) | all frozen files in B.7.2 rule 2; `persistence/providers/*.py` (stub classes only); `services/*_service.py` (stub signatures only); `api/routers/*.py` (stub routes); `docs/api-contract/*` edits; `tests/contracts/test_import_graph.py` | everything below | — | blocks all |
-| **U1 Schema & persistence core** | Rewrite 0001 + ORM (B.6); `visibility.py` (K7); `ReviewCounter` repo; scoping changes in existing `repositories.py` (owners/accounts/cards `user_id`, `public_id` generation, placeholders, `source_original_currency`, dedup switch C9); `start_run` 23505 → `IMPORT_IN_PROGRESS`; error-name map in `db.py` | `persistence/migrations/versions/0001_initial_schema.py`, `persistence/orm/models.py`, `persistence/visibility.py`, `persistence/repositories.py`, `persistence/db.py`, `persistence/providers/review_counter.py`, `tests/storage/conftest.py`, `tests/storage/test_migrations.py`, `tests/storage/test_visibility.py` | K7 behaviour; seed fixtures `seed_user`, `seed_claimed_card`, `seed_transaction` | K1, K3, K4 | PG tests of U4–U10 |
+| **U0 Contract freeze & skeleton** | K1–K9 signatures; stubs for every repository, service and router; DI wiring in `bootstrap.build_api_composition`; `pyproject` deps; contract-doc amendment (nullable `ImportIssue` location, ownerName fallback note, §B.9 defaults); import-graph test rules (§A) | all frozen files in B.7.2 rule 2; `persistence/providers/*.py` (stub classes only); `services/*_service.py` (stub signatures only); `api/routers/*.py` (stub routes); `docs/api-contract/*` edits; `tests/contracts/test_import_graph.py` | everything below | — | blocks all |
+| **U1 Schema & persistence core** | Rewrite 0001 + ORM (B.6); `visibility.py` (K7); `ReviewCounter` repo; scoping changes in existing `repositories.py` (owners/accounts/cards `user_id`, `public_id` generation, placeholders, `source_original_currency`, dedup switch to source currency); `start_run` 23505 → `IMPORT_IN_PROGRESS`; error-name map in `db.py` | `persistence/migrations/versions/0001_initial_schema.py`, `persistence/orm/models.py`, `persistence/visibility.py`, `persistence/repositories.py`, `persistence/db.py`, `persistence/providers/review_counter.py`, `tests/storage/conftest.py`, `tests/storage/test_migrations.py`, `tests/storage/test_visibility.py` | K7 behaviour; seed fixtures `seed_user`, `seed_claimed_card`, `seed_transaction` | K1, K3, K4 | PG tests of U4–U10 |
 | **U2 API foundation** | `create_app`, auth/CSRF deps (B.2), problem mapper (complete table), pagination/sort/filter parsing deps, common DTO mappers, CLI `serve`, OpenAPI conformance helper | `api/app.py`, `api/dependencies.py`, `api/problems.py`, `api/schemas/mappers.py`, `cli.py` (`serve` subcommand only), `tests/integration/api/conftest.py` (`client`, `signed_in` fixture inserting user + session through U1 seeds), `tests/integration/api/test_foundation.py`, `tests/contracts/openapi_conformance.py` | K8 behaviour; `client`/`signed_in` fixtures | K1, K2, K6 (via `FakeAuthenticator`) | endpoint tests of U4–U10 |
 | **U3 Adapters** | Argon2id hasher; HKDF/HMAC token service (CSRF, question ids, throttle keys); pycountry catalogue (minus XXX/XTS); `WorkbookReader.open_bytes` | `identity/argon2_hasher.py`, `identity/tokens.py`, `identity/pycountry_catalogue.py`, `parsing/workbook_reader` adapter file(s), `tests/identity/test_*.py` | K5 implementations | K5 | — (fakes until merged) |
 | **U4 Auth, profile & cards** | ops 1–5: `POST /sessions`, `DELETE /sessions/current`, `GET /me`, `GET /cards`, `PATCH /cards/{id}`; `Authenticator` impl; CLI `create-user` | `services/session_service.py`, `profile_service.py`, `card_service.py`; `persistence/providers/{users,sessions,login_throttle,cards_visible}.py`; `api/routers/{sessions,me,cards}.py`; `api/schemas/{auth,cards}.py`; `cli.py` (`create-user` only); tests under `tests/application/auth/`, `tests/storage/test_auth_providers.py`, `tests/integration/api/test_{sessions,me,cards}.py` | `Authenticator` (K6), `UserRepository.lock` (used by U8) | K1–K6, K8, `ReviewCounter` | — |
-| **U5 Imports** | ops 6–7: `POST /imports`, `GET /imports`; adapt `import_service`/`identity_gate`/`audit_trail` to bytes, user scope, claims, placeholders, outcome order (#7), visible `needsReview` (C1), nullable issue location (C3) | `services/import_service.py`, `identity_gate.py`, `audit_trail.py`, `services/import_api_service.py`, `domain/review.py`, `persistence/providers/{claims,import_history}.py`, `api/routers/imports.py`, `api/schemas/imports.py`; tests under `tests/application/imports/`, `tests/storage/test_claims*.py`, `tests/integration/api/test_imports.py`; existing import tests it must update | — | K1–K5, K7 (history), U1 scoped repos | — |
+| **U5 Imports** | ops 6–7: `POST /imports`, `GET /imports`; adapt `import_service`/`identity_gate`/`audit_trail` to bytes, user scope, claims, placeholders, outcome order (§A), visible `needsReview`, nullable issue location | `services/import_service.py`, `identity_gate.py`, `audit_trail.py`, `services/import_api_service.py`, `domain/review.py`, `persistence/providers/{claims,import_history}.py`, `api/routers/imports.py`, `api/schemas/imports.py`; tests under `tests/application/imports/`, `tests/storage/test_claims*.py`, `tests/integration/api/test_imports.py`; existing import tests it must update | — | K1–K5, K7 (history), U1 scoped repos | — |
 | **U6 Transactions** | ops 8, 9, 11: list (filters, sort, summary, groups), detail, filter-options | `services/transaction_service.py`, `persistence/providers/transaction_query.py`, `api/routers/transactions.py` (GET routes only), `api/schemas/transactions.py`, tests for those | `TransactionQueryRepository.visible_id/lock_visible` (used by U7, U8, U10) | K2, K3, K7, K8 | — |
 | **U7 Categorization** | ops 10, 26–31: `PATCH /transactions/{id}` (override), categorization overview, custom categories, mappings, rules | `services/category_service.py`, `persistence/providers/{categories,overrides,mappings,rules}.py`, `api/routers/categorization.py`, `api/routers/transaction_overrides.py` (PATCH on the same path, separate router), `api/schemas/categorization.py`, tests | — | K2, K3, K7, K8, `visible_id` (fake until U6) | — |
 | **U8 Trips** | ops 12–19 | `services/trip_service.py`, `persistence/providers/{trips,trip_tags,trip_exclusions}.py`, `api/routers/trips.py`, `api/schemas/trips.py`, tests | — | K3, K5 `CurrencyCatalogue`, K7 (`trip_membership`, `transaction_view_select`), K8, `UserRepository.lock`, `visible_id` (fakes until U4/U6) | — |
@@ -546,7 +515,7 @@ repository. `UnitOfWorkFactory.create(isolation=READ_COMMITTED|REPEATABLE_READ)`
 - **U4:** session cookie attributes (B.3 op 1); throttle 10 failures per 15 min per key; `create-user` reads the
   password from a prompt (never argv).
 - **U5:**
-  - Outcome order is exactly finding #7.
+  - Outcome order is exactly the import outcome order in §A.
   - `ImportResult` mapping: issues with a null location → `sheetPosition: null, row: null`.
   - Questions contain only the caller's cards.
   - A dry run never commits claims.
@@ -583,7 +552,7 @@ belong to U11. Concurrency tests belong to the unit owning the lock: U5 for clai
 - **Application (`tests/application`, in-memory fakes of the ABCs)**:
   - sign-in: throttle at the 10th failure for email or IP, dummy verify on an unknown email, rehash;
   - CSRF derivation;
-  - import outcome order (each branch of finding #7), dry-run rolls back claims, CREATE_CARD placeholder reuse, USE_EXISTING_CARD for an invisible card → 404;
+  - import outcome order (each branch of §A), dry-run rolls back claims, CREATE_CARD placeholder reuse, USE_EXISTING_CARD for an invisible card → 404;
   - batch rules: exactly one target, dedup ids, 404 whole batch, 409 ALREADY_VALIDATED, empty filter → 201/0;
   - undo: 204 already undone, 409 after move-back/revalidation, success restores the reason;
   - move-back no-op 204;
@@ -614,12 +583,12 @@ belong to U11. Concurrency tests belong to the unit owning the lock: U5 for clai
   - extend `test_import_graph.py`: `api` must not import sqlalchemy/psycopg/alembic/`persistence`; `services`/`domain` must not import fastapi/starlette/pydantic/argon2/pycountry; only bootstrap wires adapters;
   - an OpenAPI conformance test compares `app.openapi()` operationIds/status codes against `docs/api-contract/openapi.yaml` (all 31 operations).
 
-## B.9 Open questions (non-blocking; default applied)
+## B.9 Defaults pending product confirmation
+Each default below is implemented as stated until confirmed otherwise.
 - OQ-1 `Location` headers point at undefined GETs (imports, batches). Default: emit as specified.
 - OQ-2 Missing-group labels for card/currency/trip/merchant/type dimensions. Default: `key: null`, labels `No card`/`Unknown currency`/`No trip`/`Unknown merchant`/`Unknown type` pending confirmation.
 - OQ-3 Trip auto membership on domestic rows that carry a stored original currency. Default: API-visible (foreign-only) original currency.
 - OQ-4 Meaning of 404 for category mappings. Default: bank category absent from visible transactions (PUT) / no mapping (DELETE).
-- OQ-5 Throttle: rolling window, no reset on success, `Retry-After` header. Default as stated.
 - OQ-6 Nickname `""`. Default: trimmed, empty → `null`.
 - OQ-7 bucket=day range cap. Default: none.
 - OQ-8 Sortable fields for `/currency-validation-queue/items`. Default: `transactionDate, merchant, country, originalAmount, billingAmount` (± prefix).

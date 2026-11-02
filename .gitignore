@@ -15,3 +15,6 @@ htmlcov/
 *.sqlite
 *.sqlite3
 *.db
+
+# Office lock files
+~$*

@@ -1,10 +1,9 @@
 # Screen → data map
 
-**Status: current V1 screen/API mapping; approved policies synchronized.**
-The [Phase 1 architecture](../api-design-phase-1.md) supplies the proposed
-schema and three-layer boundaries. Prototype files are inputs, not authority
-for removed features. The reviewed wire-contract gaps are closed;
-detailed planning remains gated, and no application or schema implementation is implied.
+**Status: current V1 screen/API mapping; implementation not started.**
+The [Phase 1 architecture](../api-design-phase-1.md) supplies the schema changes
+and three-layer boundaries; [Phase 2](../api-design-phase-2.md) the detailed plan.
+Prototype files are inputs, not authority for features this contract drops.
 
 Sources analysed
 
@@ -19,14 +18,14 @@ Legend for the *Source* column
 
 - `table.column` – stored in the schema today.
 - **computed** – derived on the server from stored columns (aggregation, formatting, decryption).
-- **⚠ NO SOURCE** – planned V1 data absent from the checked-in schema. See the [Phase 1 schema proposal](../api-design-phase-1.md#3-proposed-schema-changes).
+- **⚠ NO SOURCE** – planned V1 data absent from the checked-in schema. See the [Phase 1 schema changes](../api-design-phase-1.md#3-schema-changes).
 - **client** – pure UI state; no API involvement.
 - **i18n** – the frontend localizes real bank categories/countries from Hebrew bank names / ISO codes. Missing groups use null keys and readable fallback labels, also localizable by dimension.
 - **Deferred – out of scope v1** – sharing-related; not in the v1 contract.
-- **Dropped** – removed by a review decision; not in the contract.
+- **Dropped** – not in the contract.
 
 The production target is a fresh database. Section 1 describes the checked-in
-schema, while feature rows identify planned additions; no legacy backfill or
+schema, while feature rows identify planned additions; no backfill or
 ownership adoption is needed.
 
 Abbreviations: `tx` = `transactions`, `ftd` = `foreign_transaction_details`, `trr` = `transaction_review_reasons`, `ip` = `installment_plans`, `ir` = `import_runs`.

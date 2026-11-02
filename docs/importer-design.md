@@ -1,4 +1,6 @@
-# Bank Transactions Parser Module — Implementation Plan
+# Bank Transactions Importer — Design
+
+Design of the implemented importer library and CLI. Diagrams: [sequence-diagram.md](sequence-diagram.md). Usage: [../README.md](../README.md). The schema in §4 is the importer schema; the REST API adds tables and columns, listed in [api-design-phase-2.md](api-design-phase-2.md) §B.6.
 
 ## 1. Goal
 
@@ -17,7 +19,7 @@ Delivered as a library plus a thin CLI, to be embedded into a larger app. A futu
 | Scope | Library + CLI (`import`, `detect`, `init-db`) |
 | Persistence | SQLAlchemy 2.0 ORM + Alembic; PostgreSQL 15+ |
 | Sensitive data | Card last-4 and bank account numbers stored **deterministically encrypted** (AES-SIV), never as plaintext; decryptable for display |
-| Deduplication | Prefer a nullable issuer reference; otherwise compare transaction-group counts across import runs, preserving every repeated row within one file |
+| Deduplication | Prefer a nullable issuer reference (with installment number); otherwise compare transaction-group counts across import runs, preserving every repeated row within one file |
 | Installments | One transaction row per charge, linked to an `installment_plans` row |
 | Foreign transactions | `transactions` holds the final billed amount incl. commission; `foreign_transaction_details` holds the commission with its own currency + rates |
 | Foreign fee rows | Folded into the parent transaction — never persisted as a transaction |
@@ -137,7 +139,8 @@ transactions(
   created_at)
 
 CREATE UNIQUE INDEX ux_transactions_issuer_reference
-  ON transactions(card_id, transaction_date, issuer_reference)
+  ON transactions(card_id, transaction_date, issuer_reference, installment_number)
+  NULLS NOT DISTINCT
   WHERE issuer_reference IS NOT NULL;
 
 transaction_review_reasons(
@@ -288,7 +291,7 @@ class StatementParseResult:
 
 ## 6. Import Flow
 
-1. `StatementImportService.import_file(path)`.
+1. `StatementImportService.import_file(path, dry_run=False)`.
 2. SHA-256 of the file → `import_runs` row (`RUNNING`) in a short committed audit transaction. This audit row is deliberately written before any owner, account, card, installment plan or transaction data and survives a later failure.
 3. `ExcelWorkbookReader` → `WorkbookView`; `ParserRegistry` picks a parser by `sniff()` confidence (none → `UnknownFormatError`).
 4. `parser.read_context(wb)` → owner hint, account hint, card hints, period, statement charge date, declared totals. Last-4 and account numbers exist only in memory.
@@ -316,7 +319,7 @@ class StatementParseResult:
 
 Re-importing overlapping files (a yearly export plus monthly statements) must not double-count, while genuinely repeated purchases must survive.
 
-- When `issuer_reference` is present, `(card_id, transaction_date, issuer_reference)` identifies the transaction. An existing reference is counted as a duplicate and skipped; a new reference is inserted.
+- When `issuer_reference` is present, `(card_id, transaction_date, issuer_reference, installment_number)` identifies the transaction; a missing installment number equals another missing one. An existing key is counted as a duplicate and skipped; a new key is inserted. Of repeated keys inside one file, the first is selected and the later copies are duplicates.
 - Without an issuer reference, the comparison key is `(card_id, transaction_date, merchant_name_norm, original_amount, original_currency, installment_number)`. Amount and currency comparisons are NULL-safe.
 - The importer groups all rows from the current file before querying existing reference-less transactions. For each comparison key, `insert_count = max(0, incoming_count - existing_count)`. The remaining incoming rows are counted as duplicates and skipped.
 - This preserves repeated purchases within one file: three identical coffee-shop rows in the first file insert three transactions. A later file containing the same three rows inserts none; if it contains four, only the surplus fourth row is inserted.
@@ -342,32 +345,32 @@ Re-importing overlapping files (a yearly export plus monthly statements) must no
 - An imported foreign transaction must have a non-zero `original_amount`, a `billing_amount` and a `billing_currency`. A missing or zero original amount produces an error-level `MISSING_OR_ZERO_FX_ORIGINAL_AMOUNT` row issue and the row is skipped. `original_currency` may remain `NULL`; the numeric rate is still calculated and the transaction carries `UNKNOWN_CURRENCY`.
 - Effective-rate arithmetic uses full `Decimal` precision and is rounded only when persisted to `NUMERIC(18,6)`.
 
-## 10. Todos
+## 10. Implemented behavior rules
 
-Every component is developed test-first: write focused unit/component tests before its implementation, then refactor while green. Database mappings, migrations and repositories use PostgreSQL integration tests rather than mocked unit tests. End-to-end vertical integration tests run after the participating components are complete.
+These rules refine the flow above; where they differ, they win.
 
-1. `project-scaffold` — package layout, pyproject, ruff, mypy, pytest (Python 3.12+).
-2. `domain-model` — enums, `Money`, frozen parsed dataclasses (`StatementContext`, hints, `CardHintKey`, `ParsedTransaction`, `StatementParseResult`, `ParsedFxDetail`, `ParsedInstallmentRef`, `FeeCandidate`), error hierarchy.
-3. `normalizers` — date/amount/currency/text normalizers + unit tests.
-4. `workbook-reader` — openpyxl adapter, `WorkbookView`/`SheetView`, `HeaderLocator`, `ColumnMap`.
-5. `parser-interfaces` — the `StatementParser` contract of §5.1, `ParserRegistry`, `TabularStatementParser` with its default finalize pipeline.
-6. `shared-installments` — `InstallmentPlanBuilder`: groups parser-supplied installment refs into plans (issuer reference when available, else merchant + purchase date + amount + currency + count), per-charge vs. plan totals.
-7. `shared-fx-fees` — `ForeignFeeFolder` (generic nearest-match fold over parser-supplied fee markers) + `EffectiveRateCalculator`.
-8. `dedup-keys` — nullable issuer-reference index plus count-based grouping for reference-less transactions; insert surplus rows and skip existing counts.
-9. `parser-isracard` — banner context, banner-derived charge date, `פירוט נוסף` installments and discounts, per-currency totals check.
-10. `parser-max` — 16 columns, dual sheet, multi-card via last-4, FX rate column, `תשלום 4 מתוך 10` notes with the plan total in the original-amount column, city/country split.
-11. `parser-cal-visa` — multi-line headers, account from sheet name, blank charge amount ⇒ skip as `PENDING_TRANSACTION`.
-12. `identity-resolution` — `IdentifierCipher`, `IdentityResolver` (ABC), CLI and non-interactive resolvers.
-13. `orm-schema` — SQLAlchemy models per §4 + Alembic initial migration.
-14. `repositories-uow` — repository ABCs, SQLAlchemy implementations, grouped-count queries, bulk inserts, UoW.
-15. `mappers` — map immutable parsed transactions plus resolved IDs to `NewTransactionAggregate`; parser output is never mutated.
-16. `import-service` — audit-run lifecycle guaranteeing every `RUNNING` reaches `FAILED`/`NEEDS_INPUT`/`PARTIAL`/`SUCCESS` (incl. a stuck-`RUNNING` sweep on startup), identity gate, `ResolvedCards`, totals check, row-issue reporting, deduplication selection, `ImportReport`.
-17. `ports-and-bootstrap` — `WorkbookReader`/`ParserSelector`/`IdentifierProtector` ABCs in `ports/`, concrete adapters subclassing them, `bootstrap.py` composition root wiring `StatementImportService`.
-18. `cli` — `import`, `detect`, `init-db`, `--dry-run`, `--non-interactive`, `--dsn`.
-19. `tests-integration` — vertical integration of the already tested components: golden files for all issuers, overlapping re-imports, identity prompts, deduplication and PostgreSQL round-trips.
-20. `docs` — README (usage, adding an issuer, implementing an `IdentityResolver`) + `docs/sequence-diagram.md`.
+1. **One live unit of work for identity and domain data.** The identity gate, the plan upserts and the transaction insertion share a single `UnitOfWork`. Card identities are flushed (so they receive real ids) before `read_transactions` runs. A normal run commits that unit once, after insertion. A dry run always rolls the whole unit back, including identities the run created. The audit record is written through separate, independent units of work and is always committed.
+2. **Reference keys include the installment number** (§7). Stored rows are never updated or deleted.
+3. **Per-card identity questions.** The gate resolves every card in the file before any transaction is read. A card with exactly one consistent stored candidate is reused without a question, even when the file omits identity hints. With more than one consistent candidate, or none, the resolver receives an `IdentityQuestion` with explicit choices; the service never picks the first. A non-interactive run collects every unresolved card, rolls back all identity changes and returns `NEEDS_INPUT` without parsing a row.
+4. **Account lookup returns every match.** `AccountRepository.find_by_number(bank_code, encrypted_number)` returns a tuple (none, one or many, ordered by id), because different or unknown banks may reuse the same digits. An account is determined only when exactly one match is consistent with the owner; otherwise the user is asked.
+5. **Max identity column scan.** Max statements carry the card last-4 in a column rather than in a banner; the Max parser scans that identity column and reports one card per distinct value.
+6. **Ciphertext only.** Card last-4 values and account numbers are encrypted with `encrypt(kind, value)` / `decrypt(kind, token)`, bound to the identifier type, before any command reaches a repository. Owner, account and card labels that contain a known identifier are rejected, and reports, audit rows and failure summaries never contain plaintext identifiers.
+7. **Report and audit counts.** `rows_total` is the number of data rows read (banners, footers and blank rows excluded). `rows_skipped` is rows read minus transactions produced (pending, malformed and folded fee rows). `duplicates` is valid rows minus selected rows. On a dry run the report shows the proposed counts with `dry_run=True`, while the audit row records `rows_imported=0` and a summary starting "DRY RUN: nothing was committed", so the audit never claims rows that were not committed.
+8. **Declared totals are a warning only.** The declared totals are compared with all valid charged rows before deduplication. A mismatch adds a warning, an issue note and an error-summary note; it does not force `PARTIAL`. A file that declares no totals reports the check as unavailable. `PARTIAL` is set only by `ERROR` issues.
+9. **Failure handling.** After the run is started, every failure ends in a terminal audit record: `NEEDS_INPUT` for unresolved identities, otherwise the domain unit is rolled back and a separate committed `FAILED` record is written before the error is re-raised. A record that was already finished (for example swept as stale) is never overwritten. Summaries never contain the text of untrusted errors.
+10. **Two-digit year window.** `BT_TWO_DIGIT_YEARS_BACK` (default 80) selects the 100-year window `[anchor - back, anchor + 99 - back]` for two-digit years; the statement anchor priority is unchanged.
+11. **Precision boundary.** Parsed money and FX values keep full `Decimal` precision. Persistence commands round exactly once with `ROUND_HALF_UP`: money to 2 places, rates to 6 (`domain/money.py`). Comparison and plan keys use the same amount rounding. Source values are not rejected for having extra decimals.
+12. **Stale-run sweep and audit labels.** At the start of every import, `RUNNING` audit rows older than one hour (by `started_at`; there is no heartbeat) are marked `FAILED`. `file_path`/`file_name` hold hash-based labels (`sha256/<hash>`, `<hash[:12]><suffix>`), never the original path or name (`services/audit_trail.py`).
+13. **Installment-plan upsert.** The unconditional natural unique key is kept. An upsert inserts with `ON CONFLICT DO NOTHING`, then selects the plan by natural key and by issuer reference; if they disagree, it fails with `PersistenceError` and never merges or weakens the key.
+14. **Row classification.**
+    - Pending: a missing billed amount or charge date (skipped as `PENDING_TRANSACTION`, severity INFO, not a partial failure). A future charge date alone does not make a row pending.
+    - Foreign: Max foreign-sheet rows (even with equal currencies), differing known currencies, or explicit foreign evidence. A printed rate without a fee row never implies a commission.
+    - Fee folding window defaults to 3 days and, with the issuer fee keywords, is configurable.
+    - Refund original amounts are kept as supplied; signed effective rates are billing/original.
+    - Zero-value domestic discounts are kept. An installment with unknown plan identity stays a valid charge with `AMBIGUOUS_INSTALLMENT`.
+15. **Packaging.** Alembic resources live in the package (`bank_transactions.persistence.migrations`) so installed wheels can migrate; the root `alembic.ini` points to the same directory. `SQLAlchemy>=2.0.16` is required for `postgresql_nulls_not_distinct`.
 
-Dependencies: 1 → 2 → {3,4} → 5 → {6,7,8} → {9,10,11} → 12 → 13 → {14,15} → 16 → 17 → {18,19} → 20.
+Quality gates: components are developed test-first; mappings, migrations and repositories use PostgreSQL integration tests (see the README for commands).
 
 ## 11. Notes
 
@@ -376,4 +379,4 @@ Dependencies: 1 → 2 → {3,4} → 5 → {6,7,8} → {9,10,11} → 12 → 13 �
 - Transaction date and charge date are both first-class — the enabler for summarising actual expenses over a custom period across cards with different billing cycles.
 - Hebrew text is stored as-is (UTF-8); normalization only folds whitespace and quote variants for matching.
 - The categorization module will later add its own `resolved_category_id`; `bank_category_raw` is never modified.
-- Extension points: CSV/`.xls` behind the same `WorkbookView`, more issuers via `ParserRegistry`, a UI `IdentityResolver`, a REST layer over `StatementImportService`.
+- Extension points: CSV/`.xls` behind the same `WorkbookView`, more issuers via `ParserRegistry`, a UI `IdentityResolver`. The REST API is specified in [api-design-phase-1.md](api-design-phase-1.md).

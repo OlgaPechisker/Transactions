@@ -3,8 +3,7 @@ info:
   title: Bank Transactions UI API
   version: 1.0.0-proposal
   description: |
-    Current V1 planning contract. See api-contract.md for conventions and ../api-design-phase-1.md for architecture.
-    Approved policies and reviewed wire-contract decisions are synchronized; detailed implementation planning remains gated.
+    Current V1 contract; implementation not started. See api-contract.md for conventions, ../api-design-phase-1.md for architecture and ../api-design-phase-2.md for the implementation plan.
     Planned stack is FastAPI, Uvicorn and Argon2id. Users are provisioned administratively.
     Sessions expire after 12 absolute hours without sliding extension; store token digests only.
     Bearer credentials take precedence over cookies; invalid bearer credentials return 401 without cookie fallback.

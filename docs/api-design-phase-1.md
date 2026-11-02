@@ -1,40 +1,18 @@
 # Phase 1 - API high-level design
 
-**Status: Phase 1 decisions reviewed on 2026-11-01. This consolidated design
-awaits final approval; Phase 2 has not started.**
+**Status: approved V1 architecture and policies. The REST API is not implemented
+yet; the detailed implementation plan is [api-design-phase-2.md](api-design-phase-2.md).**
 
 **Extend the existing importer and PostgreSQL persistence rather than replace
 them.** The transaction core is reusable; authentication, trips, categorization,
-and currency-validation history require new persistence. This document describes
-the current V1 architecture and policies, not their decision history.
+and currency-validation history require new persistence.
 
-This document records a plan only. No application code was changed and no
-database was contacted.
-
-## Review basis and scope
-
-The API contract and supporting documentation under `docs` were reviewed:
-
-- `api-contract\api-contract.md`
-- `api-contract\openapi.yaml`
-- `api-contract\screen-to-data-map.md`
-- `sequence-diagram.md`
-- `implementation-tracking.md`
-
-The existing schema was inspected through checked-in ORM definitions and
-migrations, not through a live database:
-
-- `src\bank_transactions\persistence\orm\models.py`
-- `src\bank_transactions\persistence\migrations\versions\0001_initial_schema.py`
-
-Existing service, identity, persistence, composition, and dependency conventions
-were also inspected.
-
-**Documentation alignment:** the Markdown contract, OpenAPI, and screen map
-reflect the approved V1 policies. The reviewed wire-contract gaps are closed;
-there is no parallel historical contract.
-This document supplies architecture and high-level schema proposals, not
-endpoint-by-endpoint implementation specifications.
+Where this document and Phase 2 differ in detail (exact DDL, interface names,
+locking), Phase 2 is authoritative. The wire contract is
+[api-contract\api-contract.md](api-contract/api-contract.md) with
+[openapi.yaml](api-contract/openapi.yaml); the screen mapping is
+[screen-to-data-map.md](api-contract/screen-to-data-map.md). The importer it builds on is
+described in [importer-design.md](importer-design.md).
 
 There is no seeded production database. The target is a fresh database, not an
 upgrade of populated production data.
@@ -83,9 +61,9 @@ indistinguishable from missing resources (`404`); errors use RFC 9457; money and
 rates are decimal strings; only card last-four digits are exposed.
 
 Sharing, stored uploads, generic review actions, trip editing/deletion, and
-category-wide reset remain excluded. Automatic currency suggestions, confidence
+category-wide reset are out of scope. Automatic currency suggestions, confidence
 bands, rule positions, and percentage/purchase/refund reporting are also
-excluded by this review. No additional endpoints are proposed.
+out of scope. No additional endpoints exist.
 
 ## 2. Contract versus existing schema
 
@@ -98,8 +76,8 @@ and foreign details.
 | Authentication | No users, credentials, sessions, ownership claims, or shared login-throttling state exist. Add them using the approved stack and session policy. |
 | Public identifiers | Existing exposed entities use integer primary keys. The contract requires opaque identifiers rather than exposing those integers directly. |
 | Ownership | Reserve issuer + canonical last-four for one app user. Card creation claims that key; another user receives `409 DATA_ALREADY_OWNED`. Statement-holder names and file hashes do not authorize access. Caller scope must be enforced in provider operations. |
-| Owner/account identity scope | Existing owner match keys and bank/account identities are globally unique. Scope metadata discovery and uniqueness to the app user so creating a different claimed card does not expose another user's identity candidates or require reusing their metadata. Exact scope columns and foreign keys belong to Phase 2. |
-| Trips | Add trip definitions, manual tags, and exclusions. Reject inclusive date overlaps for the same user, regardless of currency, with `409 TRIP_DATE_OVERLAP`; overlapping-trip allocation is no longer needed. |
+| Owner/account identity scope | Existing owner match keys and bank/account identities are globally unique. Scope metadata discovery and uniqueness to the app user so creating a different claimed card does not expose another user's identity candidates or require reusing their metadata. Exact columns and foreign keys: Phase 2 §B.6. |
+| Trips | Add trip definitions, manual tags, and exclusions. Reject inclusive date overlaps for the same user, regardless of currency, with `409 TRIP_DATE_OVERLAP`. |
 | Categorization | Add custom categories, overrides, mappings, rules, and terms. Manual override wins over newest matching rule, then mapping, then bank category. Do not add position-driven priority. |
 | Currency validation | Transactions and review reasons support the currency update and queue removal, but validation audit and undo-batch persistence are missing. |
 | **Deduplication** | Reference-less matching currently includes `transactions.original_currency`. Validation changes that value; reimporting the original workbook can therefore insert duplicates. Immutable source currency must be preserved for matching. See `src\bank_transactions\persistence\repositories.py:413-440`. |
@@ -110,15 +88,15 @@ and foreign details.
 | Import filename | Remove `fileName` from API results and history. The original name stays client-side; internal hash-derived audit labels may remain. No original filename/path persistence is needed. |
 | Concurrent imports | Add a global same-file in-progress guard and provider-owned card-key serialization. The hash guard coordinates concurrent requests; it does not establish card ownership. |
 | Scalar constraints | Use the approved ISO currency catalogue rather than a three-letter pattern alone. Preserve legitimate nullable fields, missing groups, and absent installment plans; do not invent unknown values. |
-| Detailed wire definitions | Approved policies, shared billing summaries, the code/name catalogue, billing-currency options, null-key missing groups, and monthly-only average lines are synchronized. The reviewed wire-contract gaps are closed. |
+| Detailed wire definitions | Policies, shared billing summaries, the code/name catalogue, billing-currency options, null-key missing groups, and monthly-only average lines are defined in the contract and OpenAPI. |
 
 **Already reusable:** encrypted identifiers, card/account ownership constraints,
 Decimal precision helpers, nullable FX data, installment persistence, review
 reasons, durable import audit, and reference/multiset deduplication.
 
-## 3. Proposed schema changes
+## 3. Schema changes
 
-These are high-level proposals, not finalized DDL.
+Summary of the changes; exact DDL is in Phase 2 §B.6.
 
 | Change | Principal columns, constraints, and indexes |
 |---|---|
@@ -126,8 +104,8 @@ These are high-level proposals, not finalized DDL.
 | `card_ownership_claims` | User, issuer, encrypted canonical last-four, creation timestamp; globally unique issuer/last-four ownership key; user lookup index |
 | `cards` ownership association | Link each card to the matching ownership claim; enforce claim/card-key consistency. Statement `owners` and `accounts` remain metadata, not authorization sources |
 | `owners`, `accounts` identity scope | Associate identity metadata with the app user's scope; replace global owner-match and account-identity uniqueness with scoped uniqueness. Preserve card/account owner-consistency foreign keys |
-| `sessions` | User foreign key, unique token digest, CSRF binding, creation/expiry and revocation state; absolute 12-hour expiry and user/expiry indexes. Raw bearer tokens are not persisted |
-| Login-throttling state | Provider-owned shared counters/window state, for example `login_rate_limits`; keys for normalized email and client IP. State must work across server workers |
+| `sessions` | User foreign key, unique token digest, creation/expiry and revocation state; absolute 12-hour expiry and user/expiry indexes. Raw bearer tokens are not persisted. The CSRF token is derived from the token digest, not stored |
+| Login-throttling state | `login_failures` rows keyed by digest of normalized email or client IP, shared across server workers |
 | Public IDs | Unique immutable public identifiers on existing `cards`, `transactions`, `import_runs`, and new externally addressed users, trips, rules, and batches |
 | `custom_categories` | User, display name, normalized name key, creation timestamp; trimmed case-insensitive per-user uniqueness, nonblank/length constraints, and reserved name `none` |
 | `transaction_category_overrides` | User, transaction, custom category; unique user/transaction pair; category references constrained to the same user |
@@ -135,7 +113,7 @@ These are high-level proposals, not finalized DDL.
 | `category_rules`, `category_rule_terms` | User, category, creation order/time; normalized terms linked to rule; newest matching rule wins and terms are unique within a rule. No position column or position-shifting behavior |
 | `trips` | User, public ID, name, currency, start/end dates, creation timestamp; date-order/name constraints and user/date lookup index. Prevent inclusive date overlaps for one user across all currencies |
 | `trip_transaction_tags`, `trip_transaction_exclusions` | Transaction/trip links; uniqueness enforcing one manual tag in the approved ownership model; unique trip/transaction exclusions; trip and transaction lookup indexes |
-| `currency_validation_batches` | Public ID, creator, creation timestamp, original applied count, and original membership or equivalent undo/invalidation evidence. Retain evidence after a member moves back to pending; support empty batches |
+| `currency_validation_batches` | Public ID, creator, creation timestamp, original applied count, undo timestamp, and immutable batch members as undo evidence. Evidence is retained after a member moves back to pending; empty batches are supported |
 | `currency_validations` | Transaction primary key, approved currency, batch, validating user, timestamp; batch and user/time indexes |
 | Immutable source currency | Add nullable `transactions.source_original_currency`; initialize from imported currency and never change during validation or undo. Deduplication uses it while API reads use effective `original_currency` |
 | Existing lookup indexes | Add claim/card visibility-path and `transactions.import_run_id` indexes where missing; additional filtering indexes should follow representative query plans |
@@ -153,13 +131,9 @@ without rewriting transaction history.
 
 ### Migration approach
 
-Use the existing packaged Alembic directory:
-
-`src\bank_transactions\persistence\migrations\versions\`
-
-The user approved a fresh-database rollout and schema redesign. The initial
-schema may be revised rather than preserving a production-upgrade path from
-`0001`; select the exact revision layout in Phase 2. There is no legacy
+The initial migration `0001_initial_schema.py` in the packaged Alembic directory
+`src\bank_transactions\persistence\migrations\versions\` is rewritten in place;
+there is no upgrade path from the importer-only schema. There is no legacy
 ownership adoption, production data reconciliation, public-ID backfill, or
 source-amount sign backfill.
 
@@ -168,10 +142,9 @@ rows are imported. Ownership claims, card metadata, plans, and transactions
 must remain consistent and atomic. Dry runs roll these changes back; durable
 import audit remains separate.
 
-Provide a down migration in Phase 2, dropping dependent objects in reverse
-order. Dropping a database populated after rollout is destructive and must be
-explicitly identified as such. Keep one canonical migration implementation in
-the package and keep ORM definitions consistent with it.
+The down migration drops dependent objects in reverse order. Downgrading a
+populated database is destructive and is documented as such. Keep one canonical
+migration implementation in the package and keep ORM definitions consistent with it.
 
 No ILS-conversion schema or live FX-rate dependency is proposed.
 
@@ -226,7 +199,7 @@ flowchart TB
     end
 
     subgraph T["PostgreSQL tables"]
-        TA["users<br/>sessions<br/>login_rate_limits"]
+        TA["users<br/>sessions<br/>login_failures"]
         TC["card_ownership_claims<br/>cards<br/>owners"]
         TB["accounts"]
         TI["import_runs"]
@@ -272,7 +245,9 @@ flowchart TB
 ```
 
 The shared projections are implementation helpers **inside persistence**, not a
-fourth request layer or a generic repository exposed to services.
+fourth request layer or a generic repository exposed to services. The provider
+boxes in the diagram are groups of repository ABCs exposed on `UnitOfWork`
+(see Phase 2 §B.5), not standalone provider objects.
 
 Every protected request's HTTP authentication adapter delegates credential
 validation to `SessionService`, which calls `SessionProvider`; the adapter never
@@ -295,8 +270,7 @@ queries sessions itself.
 
 ## 5. V1 policies
 
-The following policies apply to the V1 contract. Schema and component choices
-that implement them remain high-level proposals until final Phase 1 approval.
+The following policies apply to the V1 contract.
 
 ### 5.1 Server, credentials, and sessions
 
@@ -310,11 +284,9 @@ would introduce a broader framework and overlapping persistence conventions
 without a corresponding V1 need.
 
 Argon2id is a memory-hard password hash suited to new password storage. It was
-chosen over bcrypt's older password/input constraints and over adopting a
-PBKDF2-specific compliance strategy that this project has not required.
-Scrypt is also a viable memory-hard alternative; Argon2id is the approved
-choice. The Python implementation and benchmarked parameters remain Phase 2
-technical decisions, not permission to install a package now.
+chosen over bcrypt's older password/input constraints and over a
+PBKDF2-specific compliance strategy. The implementation is `argon2-cffi`
+with its default parameters.
 
 | Policy | Accepted behavior |
 |---|---|
@@ -324,7 +296,7 @@ technical decisions, not permission to install a package now.
 | Cookie | `HttpOnly; Secure; SameSite=Lax` |
 | Credential precedence | Bearer wins over cookie. An invalid bearer returns `401`; do not fall back to the cookie |
 | CSRF | Required for cookie-only mutations. Missing/invalid CSRF returns `403 CSRF_VALIDATION_FAILED`; missing/invalid authentication returns `401` |
-| Login throttling | After 10 failed sign-ins in 15 minutes, throttle independently by normalized email and client IP with `429`; no permanent account lockout. State must work across workers |
+| Login throttling | After 10 failed sign-ins in 15 minutes (rolling window, no reset on success), throttle independently by normalized email and client IP with `429` and `Retry-After`; no permanent account lockout. State is stored in PostgreSQL so it works across workers |
 
 The existing database and workbook-reader code is synchronous. ASGI does not
 make it nonblocking or CPU-parallel automatically. Keep blocking operations off
@@ -408,9 +380,8 @@ database rewrite.
 | State retries | Visible existing resources already satisfying undo/move-back/exclude/restore return `204`; missing/inaccessible resources return `404` |
 
 Internal query chunking, if needed, must stay within the same provider-owned
-transaction and must not change the unlimited, atomic API behavior. Lock
-duration, memory use, response size, and operational failure handling need an
-honest detailed treatment in Phase 2.
+transaction and must not change the unlimited, atomic API behavior. Locking is
+specified in Phase 2 §B.3.
 
 ### 5.6 Categorization
 
@@ -463,15 +434,10 @@ classified purchases and refunds.
 
 Original amounts remain unchanged in transaction details. Original currency
 still supports filtering, trip matching, and FX details; it is not a second
-spending-analytics source.
+spending-analytics source. Do not introduce absolute-value or purchase-only
+spending to support a positive-only chart.
 
-Removed statistic fields and monthly-only chart averages are synchronized in
-OpenAPI. Shared billing-summary envelopes, the code/name catalogue,
-billing-picker metadata, and null-key missing groups are defined.
-Signed-data chart presentation remains detailed UI work. Do not introduce
-absolute-value or purchase-only spending to support a positive-only chart.
-
-## 6. Key trade-offs and remaining technical work
+## 6. Key trade-offs
 
 | Design choice | Trade-off |
 |---|---|
@@ -489,33 +455,11 @@ absolute-value or purchase-only spending to support a positive-only chart.
 | Explicit HTTP error translation | Preserve intended `400` versus `422` and sanitized Problem responses, rather than relying on framework defaults |
 | Billing-only signed analytics | Avoids currency mixing and unreliable original-sign interpretation; older purchase/refund/share charts require contract/UI reconciliation |
 
-**Dependencies:** FastAPI, Uvicorn, Argon2id password hashing, and pycountry
-were approved for planning. No dependencies are installed by this task.
-The concrete Argon2id package/parameters remain to be selected and flagged.
-Existing ABC wiring, SQLAlchemy, Alembic, cryptography, and Decimal remain in
-use; no DI library, live FX service, or new database extension is assumed.
+**Dependencies (new):** `fastapi`, `uvicorn[standard]`, `python-multipart`,
+`argon2-cffi`, `pycountry` (runtime); `httpx` (dev). Existing ABC wiring,
+SQLAlchemy, Alembic, cryptography, and Decimal remain in use; no DI library,
+live FX service, or new database extension is used.
 
-**V1 policies are recorded in the current contract.** Remaining work is the
-detailed plan, not a decision-history document:
-
-- Carry the approved wire shapes and policies into the detailed plan without
-  reintroducing removed features.
-- Specify exact public-ID layout, identity-scope/claim foreign keys,
-  deterministic newest-rule ordering, indexes, and transactional guards.
-- Select password-hashing implementation/parameters and detailed shared
-  throttle storage/cleanup, without changing the approved policies.
-- Specify provider locks/isolation, unlimited batch handling, and complete undo
-  evidence; flag any additional dependency or database extension before use.
-- Produce fresh-schema DDL, Alembic up/down scripts, implementation order, and
-  domain/provider/endpoint test plans.
-
-## Approval gate
-
-**Phase 1 stops here. Phase 2 remains gated on explicit user approval.**
-
-After approval, Phase 2 will provide the endpoint-by-endpoint DTOs, service and
-provider interfaces, validation and error mapping, exact DDL and migrations
-(including rollback; no legacy backfill is needed), implementation dependencies,
-and test plan.
-None of those detailed deliverables or implementation work is authorized by
-saving this review document.
+The endpoint-by-endpoint plan (DTOs, service and provider interfaces, error
+mapping, DDL and migration, work breakdown, tests) is in
+[api-design-phase-2.md](api-design-phase-2.md).
