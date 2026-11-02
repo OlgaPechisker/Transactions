@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from tests.fakes import RepositorySlots
+from tests.storage.seeds import ServiceForUser
 
 from bank_transactions.domain.enums import (
     IdentifierType,
@@ -21,6 +22,7 @@ from bank_transactions.domain.enums import (
     TransactionType,
 )
 from bank_transactions.domain.errors import (
+    DataAlreadyOwnedError,
     IdentityUnresolvedError,
     PersistenceError,
     UnknownFormatError,
@@ -28,11 +30,14 @@ from bank_transactions.domain.errors import (
 from bank_transactions.domain.ids import (
     AccountId,
     CardId,
+    ClaimId,
     IdentifierToken,
     ImportRunId,
     InstallmentPlanId,
     OwnerId,
+    PublicId,
     TransactionId,
+    UserId,
 )
 from bank_transactions.domain.issues import SourceLocation
 from bank_transactions.domain.keys import ComparisonKey, IssuerReferenceKey, OwnerMatchKey
@@ -59,10 +64,12 @@ from bank_transactions.persistence.commands import (
     NewInstallmentPlan,
     NewOwner,
     NewTransactionAggregate,
+    NewUser,
 )
 from bank_transactions.persistence.interfaces import (
     AccountRepository,
     CardRepository,
+    ClaimRepository,
     ImportRunRepository,
     InstallmentPlanRepository,
     Isolation,
@@ -70,12 +77,15 @@ from bank_transactions.persistence.interfaces import (
     TransactionRepository,
     UnitOfWork,
     UnitOfWorkFactory,
+    UserRepository,
 )
 from bank_transactions.persistence.records import (
     AccountRecord,
     CardLookup,
     CardRecord,
+    ClaimRecord,
     OwnerRecord,
+    UserRecord,
 )
 from bank_transactions.ports.identifier_protector import IdentifierProtector
 from bank_transactions.ports.parser_selector import ParserSelector
@@ -145,6 +155,8 @@ class AuditState:
 
 @dataclass
 class DomainState:
+    users: dict[int, UserRecord] = field(default_factory=dict)
+    claims: dict[int, ClaimRecord] = field(default_factory=dict)
     owners: dict[int, OwnerRecord] = field(default_factory=dict)
     accounts: dict[int, AccountRecord] = field(default_factory=dict)
     cards: dict[int, CardRecord] = field(default_factory=dict)
@@ -209,17 +221,84 @@ class FakeRuns(ImportRunRepository):
         return len(stuck)
 
 
+class FakeUsers(UserRepository):
+    def __init__(self, uow: "FakeUnitOfWork") -> None:
+        self._uow = uow
+
+    def find_by_email_key(self, email_key: str) -> UserRecord | None:
+        return next(
+            (u for u in self._uow.domain.users.values() if u.email.strip().casefold() == email_key),
+            None,
+        )
+
+    def get(self, user_id: UserId) -> UserRecord | None:
+        return self._uow.domain.users.get(user_id)
+
+    def lock(self, user_id: UserId) -> None:
+        return None
+
+    def create(self, user: NewUser) -> UserRecord:
+        users = self._uow.domain.users
+        record = UserRecord(
+            UserId(_next_id(users)),
+            PublicId(f"usr_{_next_id(users)}"),
+            user.email,
+            user.display_name,
+            user.password_hash,
+        )
+        users[record.user_id] = record
+        self._uow.touch("domain")
+        return record
+
+    def update_password_hash(self, user_id: UserId, password_hash: str) -> None:
+        raise NotImplementedError
+
+
+class FakeClaims(ClaimRepository):
+    def __init__(self, uow: "FakeUnitOfWork") -> None:
+        self._uow = uow
+
+    def find(self, issuer_code: IssuerCode, last4_enc: IdentifierToken) -> ClaimRecord | None:
+        return next(
+            (
+                c
+                for c in self._uow.domain.claims.values()
+                if c.issuer_code is issuer_code and c.last4_enc == last4_enc
+            ),
+            None,
+        )
+
+    def create_or_get(
+        self, user_id: UserId, issuer_code: IssuerCode, last4_enc: IdentifierToken
+    ) -> ClaimRecord:
+        existing = self.find(issuer_code, last4_enc)
+        if existing is not None:
+            if existing.user_id != user_id:
+                raise DataAlreadyOwnedError("this card is already linked to another account")
+            return existing
+        claims = self._uow.domain.claims
+        record = ClaimRecord(ClaimId(_next_id(claims)), user_id, issuer_code, last4_enc)
+        claims[record.claim_id] = record
+        self._uow.touch("domain")
+        return record
+
+    def lock(self, issuer_code: IssuerCode, last4_enc: IdentifierToken) -> ClaimRecord | None:
+        return self.find(issuer_code, last4_enc)
+
+
 class FakeOwners(OwnerRepository):
     def __init__(self, uow: "FakeUnitOfWork") -> None:
         self._uow = uow
 
-    def list_all(self) -> tuple[OwnerRecord, ...]:
+    def list_all(self, user_id: UserId | None = None) -> tuple[OwnerRecord, ...]:
         return tuple(self._uow.domain.owners.values())
 
-    def get(self, owner_id: OwnerId) -> OwnerRecord | None:
+    def get(self, owner_id: OwnerId, user_id: UserId | None = None) -> OwnerRecord | None:
         return self._uow.domain.owners.get(owner_id)
 
-    def find_by_match_key(self, match_key: OwnerMatchKey) -> OwnerRecord | None:
+    def find_by_match_key(
+        self, match_key: OwnerMatchKey, user_id: UserId | None = None
+    ) -> OwnerRecord | None:
         return next((o for o in self.list_all() if o.match_key == match_key), None)
 
     def create(self, owner: NewOwner) -> OwnerRecord:
@@ -236,19 +315,32 @@ class FakeAccounts(AccountRepository):
     def __init__(self, uow: "FakeUnitOfWork") -> None:
         self._uow = uow
 
-    def list_all(self) -> tuple[AccountRecord, ...]:
+    def list_all(self, user_id: UserId | None = None) -> tuple[AccountRecord, ...]:
         return tuple(self._uow.domain.accounts.values())
 
-    def get(self, account_id: AccountId) -> AccountRecord | None:
+    def get(self, account_id: AccountId, user_id: UserId | None = None) -> AccountRecord | None:
         return self._uow.domain.accounts.get(account_id)
 
     def find_by_number(
-        self, bank_code: str | None, account_number_enc: IdentifierToken
+        self,
+        bank_code: str | None,
+        account_number_enc: IdentifierToken,
+        user_id: UserId | None = None,
     ) -> tuple[AccountRecord, ...]:
         return tuple(
             a
             for a in self.list_all()
             if a.bank_code == bank_code and a.account_number_enc == account_number_enc
+        )
+
+    def find_placeholder(self, owner_id: OwnerId) -> AccountRecord | None:
+        return next(
+            (
+                a
+                for a in self._uow.domain.accounts.values()
+                if a.owner_id == owner_id and a.bank_code is None and a.account_number_enc is None
+            ),
+            None,
         )
 
     def create(self, account: NewAccount) -> AccountRecord:
@@ -277,7 +369,7 @@ class FakeCards(CardRepository):
     def __init__(self, uow: "FakeUnitOfWork") -> None:
         self._uow = uow
 
-    def get(self, card_id: CardId) -> CardRecord | None:
+    def get(self, card_id: CardId, user_id: UserId | None = None) -> CardRecord | None:
         return self._uow.domain.cards.get(card_id)
 
     def find_candidates(self, lookup: CardLookup) -> tuple[CardRecord, ...]:
@@ -421,6 +513,14 @@ class FakeUnitOfWork(RepositorySlots, UnitOfWork):
         return FakeCards(self)
 
     @property
+    def users(self) -> UserRepository:
+        return FakeUsers(self)
+
+    @property
+    def claims(self) -> ClaimRepository:
+        return FakeClaims(self)
+
+    @property
     def installment_plans(self) -> InstallmentPlanRepository:
         return FakePlans(self)
 
@@ -544,17 +644,25 @@ class World:
         self.parser = FakeParser(self.context(), self.result([]))
         self.selector = FakeSelector(self.parser)
         self.factory = FakeUnitOfWorkFactory(self.db)
+        with self.factory.create() as uow:
+            self.user = uow.users.create(
+                NewUser("dana@example.com", "dana@example.com", "Dana", "hash")
+            )
+            uow.commit()
 
-    def service(self):
+    def service(self) -> ServiceForUser:
         from bank_transactions.services.import_service import StatementImportService
 
-        return StatementImportService(
-            self.reader,
-            self.selector,
-            self.protector,
-            self.resolver,
-            self.factory,
-            clock=self.clock,
+        return ServiceForUser(
+            StatementImportService(
+                self.reader,
+                self.selector,
+                self.protector,
+                self.resolver,
+                self.factory,
+                clock=self.clock,
+            ),
+            self.user.user_id,
         )
 
     def statement_file(self, name: str = "statement.xlsx", content: bytes = b"bytes-1") -> Path:
@@ -615,6 +723,7 @@ class World:
         same_account_as: CardRecord | None = None,
     ) -> CardRecord:
         """Committed identity data, created directly (as an earlier import would have)."""
+        last4_enc = self.token(IdentifierType.CARD_LAST4, last4)
         with self.factory.create() as uow:
             if same_account_as is not None:
                 owner_id, account_id = same_account_as.owner_id, same_account_as.account_id
@@ -635,8 +744,9 @@ class World:
                     owner_id,
                     account_id,
                     issuer,
-                    self.token(IdentifierType.CARD_LAST4, last4),
+                    last4_enc,
                     None,
+                    uow.claims.create_or_get(self.user.user_id, issuer, last4_enc).claim_id,
                 )
             )
             uow.commit()

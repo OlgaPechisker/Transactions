@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from tests.fakes import RepositorySlots
+from tests.storage.seeds import ServiceForUser
 
 from bank_transactions.domain.enums import ImportStatus
 from bank_transactions.domain.errors import PersistenceError, UnknownFormatError
@@ -16,7 +17,14 @@ from bank_transactions.persistence.interfaces import (
 )
 from bank_transactions.services.import_service import StatementImportService
 
-DOMAIN_TABLES = ("owners", "accounts", "cards", "installment_plans", "transactions")
+DOMAIN_TABLES = (
+    "owners",
+    "accounts",
+    "card_ownership_claims",
+    "cards",
+    "installment_plans",
+    "transactions",
+)
 
 
 class InsertFailsRepository(TransactionRepository):
@@ -43,6 +51,7 @@ class InsertFailsUnitOfWork(RepositorySlots, UnitOfWork):
     owners = property(lambda self: self._inner.owners)
     accounts = property(lambda self: self._inner.accounts)
     cards = property(lambda self: self._inner.cards)
+    claims = property(lambda self: self._inner.claims)
     installment_plans = property(lambda self: self._inner.installment_plans)
     transactions = property(lambda self: InsertFailsRepository(self._inner.transactions))
 
@@ -62,17 +71,20 @@ class InsertFailsFactory(UnitOfWorkFactory):
 
 
 def test_a_late_database_failure_rolls_back_the_identities_and_records_a_failed_audit(
-    factory, cipher, answering_resolver, examples, scalar, sql
+    factory, cipher, answering_resolver, examples, scalar, sql, user
 ):
     from bank_transactions.parsing.default_registry import build_default_registry
     from bank_transactions.parsing.workbook import ExcelWorkbookReader
 
-    service = StatementImportService(
-        ExcelWorkbookReader(),
-        build_default_registry(),
-        cipher,
-        answering_resolver,
-        InsertFailsFactory(factory),
+    service = ServiceForUser(
+        StatementImportService(
+            ExcelWorkbookReader(),
+            build_default_registry(),
+            cipher,
+            answering_resolver,
+            InsertFailsFactory(factory),
+        ),
+        user.user_id,
     )
 
     with pytest.raises(PersistenceError):
@@ -133,15 +145,15 @@ def test_a_run_left_running_for_over_an_hour_is_marked_failed_by_the_next_import
 ):
     stale = datetime.now(UTC) - timedelta(hours=3)
     sql(
-        "INSERT INTO import_runs (file_path, file_name, file_sha256, started_at, status) "
-        "VALUES ('sha256/x', 'x', :sha, :started, 'RUNNING')",
+        "INSERT INTO import_runs (public_id, file_path, file_name, file_sha256, started_at, status)"
+        " VALUES ('imp_x', 'sha256/x', 'x', :sha, :started, 'RUNNING')",
         sha="a" * 64,
         started=stale,
     )
     fresh = datetime.now(UTC) - timedelta(minutes=5)
     sql(
-        "INSERT INTO import_runs (file_path, file_name, file_sha256, started_at, status) "
-        "VALUES ('sha256/y', 'y', :sha, :started, 'RUNNING')",
+        "INSERT INTO import_runs (public_id, file_path, file_name, file_sha256, started_at, status)"
+        " VALUES ('imp_y', 'sha256/y', 'y', :sha, :started, 'RUNNING')",
         sha="b" * 64,
         started=fresh,
     )

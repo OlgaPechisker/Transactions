@@ -11,6 +11,7 @@ from bank_transactions.cli import main
 from bank_transactions.config import Settings
 from bank_transactions.domain.enums import ImportStatus, IssuerCode, IssueSeverity, RowIssueCode
 from bank_transactions.domain.errors import ParseError, UnknownFormatError
+from bank_transactions.domain.ids import UserId
 from bank_transactions.domain.issues import RowIssue, SourceLocation
 from bank_transactions.services.report import ImportReport
 
@@ -36,9 +37,17 @@ class FakeRunner:
     def __init__(self, outcome):
         self.outcome = outcome
         self.calls = []
+        self.user_lookups = []
+        self.known_users = {"dana@example.com": UserId(11)}
+        self.imported_for = []
 
-    def import_file(self, path, *, dry_run=False):
+    def find_user(self, email_key):
+        self.user_lookups.append(email_key)
+        return self.known_users.get(email_key)
+
+    def import_file(self, path, *, user_id, dry_run=False):
         self.calls.append((path, dry_run))
+        self.imported_for.append(user_id)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
         return self.outcome
@@ -92,6 +101,7 @@ def run(composition):
 
 
 FULL_ENV = {"BT_DSN": DSN, "BT_CIPHER_KEY": KEY}
+USER = ("--user", "dana@example.com")
 
 
 # --- detect -----------------------------------------------------------------------------
@@ -163,21 +173,23 @@ def test_a_failed_migration_is_reported_without_the_connection_string(run, compo
 
 
 def test_import_requires_the_dsn(run, composition):
-    code, _, err = run("import", "s.xlsx", env={"BT_CIPHER_KEY": KEY})
+    code, _, err = run("import", "s.xlsx", *USER, env={"BT_CIPHER_KEY": KEY})
 
     assert (code, composition.runner_requests) == (2, [])
     assert "BT_DSN" in err
 
 
 def test_import_requires_the_cipher_key(run, composition):
-    code, _, err = run("import", "s.xlsx", env={"BT_DSN": DSN})
+    code, _, err = run("import", "s.xlsx", *USER, env={"BT_DSN": DSN})
 
     assert (code, composition.runner_requests) == (2, [])
     assert "BT_CIPHER_KEY" in err
 
 
 def test_an_invalid_cipher_key_is_rejected_without_echoing_it(run, composition):
-    code, out, err = run("import", "s.xlsx", env={"BT_DSN": DSN, "BT_CIPHER_KEY": "not-base64!!"})
+    code, out, err = run(
+        "import", "s.xlsx", *USER, env={"BT_DSN": DSN, "BT_CIPHER_KEY": "not-base64!!"}
+    )
 
     assert code == 2
     assert "not-base64" not in out + err
@@ -194,7 +206,7 @@ def test_an_invalid_numeric_setting_is_a_configuration_error(run):
 
 
 def test_a_successful_import_prints_the_counts_and_exits_zero(run, composition):
-    code, out, err = run("import", "s.xlsx", env=FULL_ENV)
+    code, out, err = run("import", "s.xlsx", *USER, env=FULL_ENV)
 
     assert (code, err) == (0, "")
     for text in ("SUCCESS", "MAX", "10 rows", "8 imported", "1 duplicate", "1 skipped", "2 need"):
@@ -205,10 +217,34 @@ def test_a_successful_import_prints_the_counts_and_exits_zero(run, composition):
     assert isinstance(settings, Settings) and settings.cipher_key == KEY
 
 
+def test_the_import_runs_for_the_user_whose_email_is_given_in_any_case(run, composition):
+    code, _, _ = run("import", "s.xlsx", "--user", "  Dana@EXAMPLE.com ", env=FULL_ENV)
+
+    assert code == 0
+    assert composition.runner.user_lookups == ["dana@example.com"]
+    assert composition.runner.imported_for == [UserId(11)]
+
+
+def test_an_unknown_user_is_a_usage_error_and_nothing_is_imported(run, composition):
+    code, out, err = run("import", "s.xlsx", "--user", "nobody@example.com", env=FULL_ENV)
+
+    assert code == 2
+    assert "no user" in err
+    assert "nobody@example.com" not in out + err
+    assert composition.runner.calls == []
+
+
+def test_the_user_option_is_required_to_import(run, composition):
+    code, _, err = run("import", "s.xlsx", env=FULL_ENV)
+
+    assert (code, composition.runner.calls) == (2, [])
+    assert "--user" in err
+
+
 def test_a_dry_run_is_announced_and_passed_to_the_service(run, composition):
     composition.runner.outcome = report(dry_run=True)
 
-    code, out, _ = run("import", "s.xlsx", "--dry-run", env=FULL_ENV)
+    code, out, _ = run("import", "s.xlsx", *USER, "--dry-run", env=FULL_ENV)
 
     assert code == 0
     assert composition.runner.calls == [(Path("s.xlsx"), True)]
@@ -216,7 +252,7 @@ def test_a_dry_run_is_announced_and_passed_to_the_service(run, composition):
 
 
 def test_non_interactive_mode_is_requested_from_the_composition(run, composition):
-    run("import", "s.xlsx", "--non-interactive", env=FULL_ENV)
+    run("import", "s.xlsx", *USER, "--non-interactive", env=FULL_ENV)
 
     assert composition.runner_requests[0][1] is False
 
@@ -226,7 +262,7 @@ def test_needing_input_lists_the_cards_and_exits_three(run, composition):
         ImportStatus.NEEDS_INPUT, unresolved_cards=("MAX card 2 of 3",), rows_total=0
     )
 
-    code, out, _ = run("import", "s.xlsx", "--non-interactive", env=FULL_ENV)
+    code, out, _ = run("import", "s.xlsx", *USER, "--non-interactive", env=FULL_ENV)
 
     assert code == 3
     assert "NEEDS_INPUT" in out and "MAX card 2 of 3" in out
@@ -239,7 +275,7 @@ def test_a_partial_import_lists_the_problem_rows_and_exits_four(run, composition
     )
     composition.runner.outcome = report(ImportStatus.PARTIAL, issues=(issue,))
 
-    code, out, _ = run("import", "s.xlsx", env=FULL_ENV)
+    code, out, _ = run("import", "s.xlsx", *USER, env=FULL_ENV)
 
     assert code == 4
     assert "PARTIAL" in out and "sheet 2 row 17" in out and "amount is missing" in out
@@ -248,7 +284,7 @@ def test_a_partial_import_lists_the_problem_rows_and_exits_four(run, composition
 def test_warnings_are_shown(run, composition):
     composition.runner.outcome = report(warnings=("Declared and calculated totals differ.",))
 
-    _, out, _ = run("import", "s.xlsx", env=FULL_ENV)
+    _, out, _ = run("import", "s.xlsx", *USER, env=FULL_ENV)
 
     assert "Declared and calculated totals differ." in out
 
@@ -256,7 +292,7 @@ def test_warnings_are_shown(run, composition):
 def test_a_domain_failure_prints_its_safe_message_and_exits_one(run, composition):
     composition.runner.outcome = ParseError("the header row is missing")
 
-    code, _, err = run("import", "private-4396.xlsx", env=FULL_ENV)
+    code, _, err = run("import", "private-4396.xlsx", *USER, env=FULL_ENV)
 
     assert code == 1
     assert "the header row is missing" in err
@@ -266,7 +302,7 @@ def test_a_domain_failure_prints_its_safe_message_and_exits_one(run, composition
 def test_an_unexpected_error_is_neutral_without_traceback_dsn_key_or_path(run, composition):
     composition.runner.outcome = RuntimeError(f"{DSN} {KEY} C:\\Users\\dana\\statements\\x.xlsx")
 
-    code, out, err = run("import", "C:\\Users\\dana\\statements\\x.xlsx", env=FULL_ENV)
+    code, out, err = run("import", "C:\\Users\\dana\\statements\\x.xlsx", *USER, env=FULL_ENV)
 
     assert code == 1
     shown = out + err
@@ -278,7 +314,7 @@ def test_an_unexpected_error_is_neutral_without_traceback_dsn_key_or_path(run, c
 def test_an_interrupt_exits_130_and_never_claims_success(run, composition):
     composition.runner.outcome = KeyboardInterrupt()
 
-    code, out, err = run("import", "s.xlsx", env=FULL_ENV)
+    code, out, err = run("import", "s.xlsx", *USER, env=FULL_ENV)
 
     assert code == 130
     assert "SUCCESS" not in out + err and "interrupted" in (out + err).lower()
@@ -294,7 +330,7 @@ def test_a_missing_command_is_a_usage_error(run):
 
 
 def test_an_unknown_option_is_a_usage_error_and_runs_nothing(run, composition):
-    code, _, err = run("import", "s.xlsx", "--force", env=FULL_ENV)
+    code, _, err = run("import", "s.xlsx", *USER, "--force", env=FULL_ENV)
 
     assert (code, composition.runner.calls) == (2, [])
     assert "usage" in err.lower()

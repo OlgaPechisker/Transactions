@@ -15,7 +15,7 @@ from bank_transactions.persistence.db import create_database_engine
 pytestmark = pytest.mark.postgres
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DOMAIN_TABLE_COUNT = 8
+DOMAIN_TABLE_COUNT = 23
 
 MIGRATION_SCRIPT = """
 import json, sys

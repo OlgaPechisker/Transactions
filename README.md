@@ -43,12 +43,17 @@ Generate a key once:
 ```powershell
 bank-transactions detect statement.xlsx            # names the issuer; needs no DSN or key
 bank-transactions init-db                          # creates or upgrades the schema; needs the DSN only
-bank-transactions import statement.xlsx            # prompts when an identity must be chosen
-bank-transactions import statement.xlsx --dry-run  # runs every step, then rolls the data back
-bank-transactions import statement.xlsx --non-interactive
+bank-transactions import statement.xlsx --user dana@example.com            # prompts when an identity must be chosen
+bank-transactions import statement.xlsx --user dana@example.com --dry-run  # runs every step, then rolls the data back
+bank-transactions import statement.xlsx --user dana@example.com --non-interactive
 ```
 
 `python -m bank_transactions ...` is equivalent.
+
+`import` requires `--user <email>`: the email (compared after trimming and case-folding) of an
+existing user, who becomes the owner of every card, owner and account the import creates. An unknown
+email is a usage error (exit 2) and nothing is written. A card already linked to another user
+fails the import (exit 1) without saying whose it is.
 
 An import reports the rows read, imported, duplicated, skipped and needing review, then any
 warnings and row issues. The report never contains card or account numbers; only an interactive
@@ -60,7 +65,7 @@ identity prompt shows a card's masked last 4 (see [Privacy](#privacy)).
 | --- | --- |
 | 0 | Success |
 | 1 | The command failed |
-| 2 | Usage or configuration error (including a missing DSN or key) |
+| 2 | Usage or configuration error (including a missing DSN or key, or an unknown `--user`) |
 | 3 | An identity must be chosen; `--non-interactive` never guesses, so nothing was imported |
 | 4 | Imported, but some rows had errors (`PARTIAL`) |
 | 130 | Interrupted; nothing was reported as completed |
@@ -104,7 +109,7 @@ from bank_transactions.config import Settings
 
 settings = Settings.from_env(os.environ)
 service = build_import_service(settings, interactive=False)
-report = service.import_file(Path("statement.xlsx"), dry_run=True)
+report = service.import_file(Path("statement.xlsx"), user_id=user_id, dry_run=True)
 ```
 
 `StatementImportService` depends only on abstractions (`WorkbookReader`, `ParserSelector`,

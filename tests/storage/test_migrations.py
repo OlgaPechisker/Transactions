@@ -11,6 +11,21 @@ from bank_transactions.persistence.orm.models import Base
 pytestmark = pytest.mark.postgres
 
 DOMAIN_TABLES = {
+    "users",
+    "sessions",
+    "login_failures",
+    "card_ownership_claims",
+    "custom_categories",
+    "transaction_category_overrides",
+    "category_mappings",
+    "category_rules",
+    "category_rule_terms",
+    "trips",
+    "trip_transaction_tags",
+    "trip_transaction_exclusions",
+    "currency_validation_batches",
+    "currency_validation_batch_members",
+    "currency_validations",
     "owners",
     "accounts",
     "cards",
@@ -26,6 +41,7 @@ ENUMS = {
     "channel_enum": ["INTERNET", "PHONE", "MOBILE", "UNKNOWN"],
     "review_reason_enum": ["UNKNOWN_CURRENCY", "UNMATCHED_FOREIGN_FEE", "AMBIGUOUS_INSTALLMENT"],
     "import_status_enum": ["RUNNING", "SUCCESS", "PARTIAL", "NEEDS_INPUT", "FAILED"],
+    "login_key_kind_enum": ["EMAIL", "IP"],
 }
 
 
@@ -90,7 +106,7 @@ def test_upgrade_creates_every_table_of_the_plan(tables):
     assert tables() >= DOMAIN_TABLES
 
 
-def test_upgrade_creates_the_four_enum_types_with_their_exact_values(enum_labels):
+def test_upgrade_creates_the_enum_types_with_their_exact_values(enum_labels):
     assert enum_labels() == ENUMS
 
 
@@ -115,14 +131,16 @@ def test_card_search_indexes_are_non_unique(index_definitions):
     assert "(account_id, issuer_code, last4_enc)" in account_issuer_last4
 
 
-def test_there_is_no_unique_constraint_on_card_last4(constraint_definitions, index_definitions):
-    card_uniques = [
-        definition
-        for definition in [*constraint_definitions.values(), *index_definitions.values()]
+def test_only_the_ownership_claim_is_unique_on_card_last4(
+    constraint_definitions, index_definitions
+):
+    last4_uniques = {
+        name
+        for name, definition in [*constraint_definitions.items(), *index_definitions.items()]
         if "UNIQUE" in definition and "last4_enc" in definition
-    ]
+    }
 
-    assert card_uniques == []
+    assert last4_uniques == {"uq_claims_issuer_last4", "uq_claims_key_user"}
 
 
 def test_reference_index_includes_installment_number_null_safely(index_definitions):
@@ -152,8 +170,8 @@ def test_installment_plan_natural_key_is_unconditionally_unique(constraint_defin
 
 
 def test_account_ciphertext_pair_is_unique(constraint_definitions):
-    assert constraint_definitions["uq_accounts_bank_code_account_number_enc"] == (
-        "UNIQUE (bank_code, account_number_enc)"
+    assert constraint_definitions["uq_accounts_user_bank_number"] == (
+        "UNIQUE (user_id, bank_code, account_number_enc)"
     )
 
 
@@ -166,8 +184,10 @@ def test_accounts_only_have_the_source_ddl_unique_constraints(index_definitions)
 
     assert account_uniques == {
         "accounts_pkey",
-        "uq_accounts_bank_code_account_number_enc",
+        "uq_accounts_user_bank_number",
         "uq_accounts_id_owner_id",
+        "uq_accounts_id_owner_user",
+        "ux_accounts_owner_placeholder",
     }
 
 
@@ -185,7 +205,7 @@ def test_a_composite_foreign_key_ties_the_card_owner_to_the_account_owner(constr
     definition = constraint_definitions["fk_cards_account_owner"]
 
     assert definition.startswith(
-        "FOREIGN KEY (account_id, owner_id) REFERENCES accounts(id, owner_id)"
+        "FOREIGN KEY (account_id, owner_id, user_id) REFERENCES accounts(id, owner_id, user_id)"
     )
 
 

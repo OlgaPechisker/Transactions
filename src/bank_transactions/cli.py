@@ -15,6 +15,7 @@ from typing import IO, NoReturn, Protocol
 from bank_transactions.config import ConfigurationError, Settings
 from bank_transactions.domain.enums import ImportStatus, IssuerCode
 from bank_transactions.domain.errors import BankTransactionsError
+from bank_transactions.domain.ids import UserId
 from bank_transactions.services.report import ImportReport
 
 EXIT_OK = 0
@@ -32,7 +33,11 @@ _INTERRUPTED = "Interrupted: the command was stopped and nothing was reported as
 
 
 class ImportRunner(Protocol):
-    def import_file(self, path: Path, *, dry_run: bool = False) -> ImportReport: ...
+    def find_user(self, email_key: str) -> UserId | None: ...
+
+    def import_file(
+        self, path: Path, *, user_id: UserId, dry_run: bool = False
+    ) -> ImportReport: ...
 
 
 class Composition(Protocol):
@@ -103,6 +108,9 @@ def _build_parser(out: IO[str], err: IO[str]) -> argparse.ArgumentParser:
     init_db.add_argument("--dsn", help="database URL (overrides BT_DSN)")
     importer = commands.add_parser("import", help="import one statement workbook")
     importer.add_argument("file", type=Path)
+    importer.add_argument(
+        "--user", required=True, help="email of the user who owns the imported cards"
+    )
     importer.add_argument("--dsn", help="database URL (overrides BT_DSN)")
     importer.add_argument(
         "--dry-run", action="store_true", help="run every step, then roll the data back"
@@ -134,7 +142,7 @@ def main(
         settings = Settings.from_env(
             os.environ if environ is None else environ, getattr(args, "dsn", None)
         )
-        return _run(args, settings, composition or _default_composition(), out, read)
+        return _run(args, settings, composition or _default_composition(), out, err, read)
     except ConfigurationError as error:
         print(f"error: {error}", file=err)
         return EXIT_USAGE
@@ -160,6 +168,7 @@ def _run(
     settings: Settings,
     composition: Composition,
     out: IO[str],
+    err: IO[str],
     read: Callable[[str], str],
 ) -> int:
     if args.command == "detect":
@@ -171,7 +180,7 @@ def _run(
         composition.initialize_database(settings)
         print("The database schema is up to date.", file=out)
         return EXIT_OK
-    return _import(args, settings, composition, out, read)
+    return _import(args, settings, composition, out, err, read)
 
 
 def _import(
@@ -179,6 +188,7 @@ def _import(
     settings: Settings,
     composition: Composition,
     out: IO[str],
+    err: IO[str],
     read: Callable[[str], str],
 ) -> int:
     settings.require_dsn()
@@ -189,7 +199,11 @@ def _import(
         read=read,
         write=lambda text: print(text, file=out),
     )
-    report = runner.import_file(args.file, dry_run=args.dry_run)
+    user_id = runner.find_user(args.user.strip().casefold())
+    if user_id is None:
+        print("error: no user has that email; create the user first.", file=err)
+        return EXIT_USAGE
+    report = runner.import_file(args.file, user_id=user_id, dry_run=args.dry_run)
     _print_report(report, out)
     return _EXIT_BY_STATUS.get(report.status, EXIT_FAILURE)
 
