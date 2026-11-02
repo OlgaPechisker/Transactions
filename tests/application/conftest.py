@@ -65,6 +65,7 @@ from bank_transactions.persistence.interfaces import (
     CardRepository,
     ImportRunRepository,
     InstallmentPlanRepository,
+    Isolation,
     OwnerRepository,
     TransactionRepository,
     UnitOfWork,
@@ -443,7 +444,7 @@ class FakeUnitOfWorkFactory(UnitOfWorkFactory):
     def __init__(self, db: FakeDatabase) -> None:
         self._db = db
 
-    def create(self) -> UnitOfWork:
+    def create(self, isolation: Isolation = Isolation.READ_COMMITTED) -> UnitOfWork:
         self._db.uows_created += 1
         return FakeUnitOfWork(self._db)
 

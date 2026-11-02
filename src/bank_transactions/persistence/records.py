@@ -215,6 +215,10 @@ class FilterOptionsRecord:
     billing_currencies: tuple[CodeCountRecord, ...]
     countries: tuple[CodeCountRecord, ...]
     types: tuple[TransactionType, ...]
+    unknown_currency_count: int
+    unknown_billing_currency_count: int
+    date_min: date | None
+    date_max: date | None
 
     def __post_init__(self) -> None:
         for name in (

@@ -89,6 +89,11 @@ class ImportRunRepository(ABC):
     def start_run(self, run: NewImportRun) -> ImportRunId:
         """Insert a RUNNING run with a NULL issuer; returns its id."""
 
+    def public_id(self, run_id: ImportRunId) -> PublicId:
+        """The run's opaque public id (`ImportResult.id`, the `Location` header). Assigned by
+        `start_run` once U1 adds the column; additive so existing callers and fakes keep working."""
+        raise NotImplementedError
+
     @abstractmethod
     def finish_run(self, run_id: ImportRunId, outcome: ImportRunOutcome) -> None:
         """Set the terminal status, finish time, issuer (if known), counts and summary."""

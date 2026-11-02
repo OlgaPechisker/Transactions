@@ -18,7 +18,7 @@ from tests.fakes import (
 from tests.fakes.auth import DEFAULT_TOKEN
 
 from bank_transactions.api.app import create_app
-from bank_transactions.bootstrap import build_api_composition
+from bank_transactions.bootstrap import build_api_composition, build_parser_selector
 from bank_transactions.config import Settings
 from bank_transactions.identity.crypto import IdentifierCipher
 from bank_transactions.services.analysis_service import AnalysisService
@@ -51,7 +51,14 @@ def fake_composition() -> ApiComposition:
         sessions=SessionService(uow_factory, FakeHasher(), tokens, clock),
         profile=ProfileService(uow_factory, UowReviewCounter(uow_factory)),
         cards=CardService(uow_factory, presenter),
-        imports=ImportApiService(uow_factory, ExcelWorkbookReader(), protector, tokens),
+        imports=ImportApiService(
+            uow_factory,
+            ExcelWorkbookReader(),
+            build_parser_selector(Settings()),
+            protector,
+            tokens,
+            clock,
+        ),
         transactions=TransactionService(uow_factory),
         categories=CategoryService(uow_factory),
         trips=TripService(uow_factory, catalogue, clock),

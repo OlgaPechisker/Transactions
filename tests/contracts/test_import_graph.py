@@ -101,21 +101,7 @@ def test_service_report_depends_only_on_domain():
 APPLICATION_RUNTIME_MODULES = [
     "bank_transactions.config",
     "bank_transactions.cli",
-    "bank_transactions.services.import_service",
-    "bank_transactions.services.identity_gate",
-    "bank_transactions.services.audit_trail",
-    "bank_transactions.services.deduplication",
-    "bank_transactions.services.totals_check",
-    "bank_transactions.services.session_service",
-    "bank_transactions.services.profile_service",
-    "bank_transactions.services.card_service",
-    "bank_transactions.services.import_api_service",
-    "bank_transactions.services.transaction_service",
-    "bank_transactions.services.category_service",
-    "bank_transactions.services.trip_service",
-    "bank_transactions.services.analysis_service",
-    "bank_transactions.services.currency_validation_service",
-    "bank_transactions.services.review_counter",
+    *SERVICE_MODULES,
 ]
 CONCRETE_ADAPTER_MODULES = (
     "bank_transactions.bootstrap",
@@ -200,6 +186,38 @@ def test_importing_the_api_loads_no_database_library_or_implementation():
     database = [name for name in loaded if name.split(".")[0] in DATABASE_LIBRARIES]
     implementations = [name for name in loaded if name.startswith(CONCRETE_ADAPTER_MODULES)]
     assert (database, implementations) == ([], [])
+
+
+PERSISTENCE_CONTRACTS = ("interfaces", "records", "commands")
+# Pre-existing import-pipeline services legitimately use these; the REST services must not
+# add to this list.
+SERVICE_EXCEPTIONS = (
+    "bank_transactions.identity.models",
+    "bank_transactions.identity.interfaces",
+    "bank_transactions.parsing.interfaces",
+    "bank_transactions.persistence.mappers",
+)
+
+
+def allowed_for_services(name):
+    parts = name.split(".")
+    if parts[1] in ("domain", "ports", "services") or name.startswith(SERVICE_EXCEPTIONS):
+        return True
+    return parts[1] == "persistence" and len(parts) > 2 and parts[2] in PERSISTENCE_CONTRACTS
+
+
+@pytest.mark.parametrize("path", files_under("services"), ids=relative_id)
+def test_services_depend_only_on_domain_ports_and_the_persistence_contracts(path):
+    names = imported_modules(path)
+    roots = {name.split(".")[0] for name in names}
+    outside = sorted(
+        name
+        for name in names
+        if name.startswith("bank_transactions.") and not allowed_for_services(name)
+    )
+
+    assert roots & set(WEB_LIBRARIES + DATABASE_LIBRARIES) == set()
+    assert outside == []
 
 
 @pytest.mark.parametrize("path", files_under("persistence/providers"), ids=relative_id)

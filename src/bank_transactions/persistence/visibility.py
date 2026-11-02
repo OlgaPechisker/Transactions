@@ -44,7 +44,9 @@ def visible_unknown_currency() -> ColumnElement[bool]:
 
 
 def api_original_currency() -> ColumnElement[str | None]:
-    """The original currency as the API reports it (validated value, else the source one)."""
+    """The original currency as the API reports it (validated value, else the source one).
+    It is foreign-only: NULL for domestic rows (§B.9 OQ-3), so a domestic transaction never
+    reports an original currency, amount or country."""
     raise NotImplementedError
 
 

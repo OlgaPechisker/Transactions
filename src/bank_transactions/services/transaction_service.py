@@ -33,9 +33,10 @@ class TransactionPage:
 
 @dataclass(frozen=True)
 class FilterOptionsView:
+    """`options` carries everything but the trips, which come from TripRepository.list."""
+
     options: FilterOptionsRecord
     trips: tuple[TripRecord, ...]
-    unknown_currency_count: int
 
 
 class TransactionService:

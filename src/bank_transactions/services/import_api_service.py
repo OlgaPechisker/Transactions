@@ -1,7 +1,7 @@
 """Statement import for the REST API. Stub: implemented by U5."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from bank_transactions.domain.enums import (
@@ -15,11 +15,15 @@ from bank_transactions.domain.queries import Page, PageRequest
 from bank_transactions.identity.models import IdentityIssue
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
 from bank_transactions.persistence.records import ImportSummaryRecord
+from bank_transactions.ports.clock import Clock
 from bank_transactions.ports.identifier_protector import IdentifierProtector
+from bank_transactions.ports.parser_selector import ParserSelector
 from bank_transactions.ports.token_service import TokenService
 from bank_transactions.ports.workbook_reader import WorkbookReader
 from bank_transactions.services.card_service import CardView
 from bank_transactions.services.interfaces import AuthContext
+
+DEFAULT_STALE_AFTER = timedelta(hours=1)
 
 
 class SelectionAction(StrEnum):
@@ -90,13 +94,21 @@ class ImportApiService:
         self,
         uow_factory: UnitOfWorkFactory,
         reader: WorkbookReader,
+        selector: ParserSelector,
         protector: IdentifierProtector,
         tokens: TokenService,
+        clock: Clock,
+        stale_after: timedelta = DEFAULT_STALE_AFTER,
     ) -> None:
+        """`selector` detects the issuer (no match → UnknownFormatError → 422); `clock` and
+        `stale_after` feed the audit trail's start time and its stuck-run sweep."""
         self._uow_factory = uow_factory
         self._reader = reader
+        self._selector = selector
         self._protector = protector
         self._tokens = tokens
+        self._clock = clock
+        self._stale_after = stale_after
 
     def run(
         self,
