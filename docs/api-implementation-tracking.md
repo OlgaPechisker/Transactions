@@ -54,7 +54,12 @@ only through a separate contract-change commit coordinated by the team leader.
 | U3 | 1 | 792d549 | ruff ✔, mypy ✔, pytest 739 (unit scope) passed | dev-u3. Review: APPROVED with NITs R1–R3 |
 | U3 | 2 | 94c52a5 | ruff ✔, mypy ✔, pytest passed | R2 fix. Re-review: APPROVED. Merged to feature branch as 2dc83d3 |
 | U2 | 1 | e711fb1 | ruff ✔, mypy ✔, pytest 674 (contracts/api/application) passed | dev-u2. Review: CHANGES REQUIRED (R1–R4) |
-| U2 | 2 | a3fd6d4 | ruff ✔, mypy ✔, pytest 1365 passed (worktree) | fixes R1–R4. Re-review: APPROVED. Merge pending (after U1) |
+| U2 | 2 | a3fd6d4 | ruff ✔, mypy ✔, pytest 1365 passed (worktree) | fixes R1–R4. Re-review: APPROVED. Merged as 601b401 (cli.py conflict resolved: serve + err arg) |
+| U1 | 1 | 3b8c2af | ruff ✔, mypy ✔ (140 files), pytest 1256 passed incl. PG | dev-u1. Review: CHANGES REQUIRED (R1–R4) |
+| U1 | 2 | 1800bfc | ruff ✔, mypy ✔, pytest 1257 passed incl. PG | fixes R1–R3 (R4 = leader contract-doc commit bfa8e97). Re-review: APPROVED. Merged as 085335a |
+| U2 | 3 | 9f3396b | ruff ✔, mypy ✔, pytest 1439 passed incl. PG | U2-R6 PG-backed signed-in fixtures. Review: CHANGES REQUIRED (R7–R9) |
+| U2 | 4 | a89b284 | ruff ✔, mypy ✔, pytest 1440 passed incl. PG | fixes R7–R8. Re-review: APPROVED. Merged as 6ea6fde |
+| integration | – | 601b401 | feature branch: ruff ✔, mypy ✔, pytest 1418 passed / 9 known max_parser failures | after U1+U2 merge |
 
 ## Review findings
 | Unit | # | Severity | Finding | Decision | Resolved in |
@@ -84,7 +89,16 @@ only through a separate contract-change commit coordinated by the team leader.
 | U2 | R3 | NIT | filter ValueError leaked internal field names | valid → dev-u2 | U2 iter 2 |
 | U2 | R4 | NIT | installment-plan derivation undocumented | valid → dev-u2 | U2 iter 2 (see note below) |
 | U2 | R5 | MINOR | real `POST /sessions` must declare `responses=problem_responses(400, 429)` + `assert_operations_conform(app, "createSession")` | valid, deferred | U4 |
-| U2 | R6 | MINOR | PG-backed `signed_in` fixture (bearer + cookie) | valid, deferred until U1 merges | U2 follow-up |
+| U2 | R6 | MINOR | PG-backed `signed_in` fixture (bearer + cookie) | valid → dev-u2 | U2 iter 3 |
+| U2 | R7 | MAJOR | NotImplementedError probe could silently keep stand-in authenticator | valid → dev-u2 | U2 iter 4 (explicit TEMPORARY swap; U4 must delete `StoredSessionAuthenticator` + swap) |
+| U2 | R8 | NIT | no PG wrong-CSRF test | valid → dev-u2 | U2 iter 4 |
+| U2 | R9 | NIT | hard-coded `SESSION_LIFETIME` in PG fixture | valid, deferred | U4 |
+| U1 | R1 | MAJOR | internal-only review reasons leaked into `visible_review_reasons` | valid → dev-u1 | U1 iter 2 |
+| U1 | R2 | MAJOR | test asserted the leak | valid → dev-u1 | U1 iter 2 |
+| U1 | R3 | NIT | docstring said domestic rows never report country | valid → dev-u1 | U1 iter 2 |
+| U1 | R4 | NIT | frozen `create_or_get` docstring said "any owner" | valid → team leader | bfa8e97 |
+| U1 | note | – | `accounts.list_all` includes placeholder accounts (no bank/number); repository `user_id` scoping is optional — later units must always pass it | open | U5 / all |
+| U0 | R17 | – | `public_id` implemented | resolved | U1 iter 1 |
 
 Installment plan derivation (U2-R4, for U6): perPayment = round_amount(billing_amount) in billing currency; planTotal = plan_total_amount in plan_currency when stored, else perPayment × total in billing currency; remainingPayments = max(total − number, 0); remainingAmount = perPayment × remainingPayments in billing currency. An empty month ∩ from/to range returns 400 INVALID_FILTER (U0-R8 implemented by U2).
 
