@@ -19,5 +19,5 @@ htmlcov/
 # Office lock files
 ~$*
 
-# Local statement samples (may contain personal data)
+# New statement samples stay local; the tracked test fixtures in examples/ remain tracked
 examples/
