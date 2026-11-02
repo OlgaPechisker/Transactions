@@ -5,11 +5,12 @@ the raw path and file name can contain a person's name or a card number and are 
 import hashlib
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from bank_transactions.domain.errors import ParseError
-from bank_transactions.domain.ids import ImportRunId
+from bank_transactions.domain.ids import ImportRunId, PublicId
 from bank_transactions.persistence.commands import ImportRunOutcome, NewImportRun
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
 
@@ -29,10 +30,27 @@ def hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def upload_labels(sha256: str) -> tuple[str, str]:
+    """An upload has no trustworthy path or name: both labels come from the hash alone."""
+    return f"sha256/{sha256}", sha256[:12]
+
+
 def audit_labels(path: Path, sha256: str) -> tuple[str, str]:
     suffix = path.suffix.lower()
     safe_suffix = suffix if _SAFE_SUFFIX.fullmatch(suffix) else ""
-    return f"sha256/{sha256}", f"{sha256[:12]}{safe_suffix}"
+    file_path, file_name = upload_labels(sha256)
+    return file_path, f"{file_name}{safe_suffix}"
+
+
+@dataclass(frozen=True)
+class StartedRun:
+    run_id: ImportRunId
+    public_id: PublicId
+    started_at: datetime
 
 
 class AuditTrail:
@@ -60,6 +78,16 @@ class AuditTrail:
             run_id = uow.import_runs.start_run(run)
             uow.commit()
         return run_id
+
+    def start_upload(self, sha256: str) -> StartedRun:
+        """Like `start`, for bytes; also reads back the run's public id for the API."""
+        file_path, file_name = upload_labels(sha256)
+        run = NewImportRun(file_path, file_name, sha256, self._clock())
+        with self._uow_factory.create() as uow:
+            run_id = uow.import_runs.start_run(run)
+            public_id = uow.import_runs.public_id(run_id)
+            uow.commit()
+        return StartedRun(run_id, public_id, run.started_at)
 
     def finish(self, run_id: ImportRunId, outcome: ImportRunOutcome) -> None:
         with self._uow_factory.create() as uow:
