@@ -10,4 +10,6 @@ class CardListResponse(ApiModel):
 
 
 class UpdateCardRequest(ApiModel):
-    nickname: str | None = Field(max_length=120)
+    # The length limit applies after trimming, so CardService enforces it; the schema extra only
+    # documents it in the OpenAPI.
+    nickname: str | None = Field(..., json_schema_extra={"maxLength": 120})

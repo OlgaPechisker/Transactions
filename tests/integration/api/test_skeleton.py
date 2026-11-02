@@ -107,7 +107,7 @@ def test_every_contract_operation_is_routed_with_its_operation_id_and_success_st
 
 def test_a_stubbed_route_answers_501_as_a_problem(app):
     response = TestClient(app).get(
-        "/api/v1/me", headers={"Authorization": f"Bearer {DEFAULT_TOKEN}"}
+        "/api/v1/categorization", headers={"Authorization": f"Bearer {DEFAULT_TOKEN}"}
     )
 
     assert response.status_code == 501

@@ -4,11 +4,14 @@ from dataclasses import dataclass
 
 from bank_transactions.domain.card_labels import card_label
 from bank_transactions.domain.enums import IdentifierType, IssuerCode
+from bank_transactions.domain.errors import NotFoundError, ValidationFailedError
 from bank_transactions.domain.ids import PublicId
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
 from bank_transactions.persistence.records import VisibleCardRecord
 from bank_transactions.ports.identifier_protector import IdentifierProtector
 from bank_transactions.services.interfaces import AuthContext
+
+MAX_NICKNAME_LENGTH = 120
 
 
 @dataclass(frozen=True)
@@ -38,17 +41,29 @@ class CardPresenter:
 
 
 class CardService:
-    """Stub: implemented by U4."""
-
     def __init__(self, uow_factory: UnitOfWorkFactory, presenter: CardPresenter) -> None:
         self._uow_factory = uow_factory
         self._presenter = presenter
 
     def list(self, context: AuthContext) -> tuple[CardView, ...]:
-        raise NotImplementedError
+        with self._uow_factory.create() as uow:
+            records = uow.visible_cards.list_visible(context.user_id)
+        return tuple(self._presenter.present(r, context.user_display_name) for r in records)
 
     def set_nickname(
         self, context: AuthContext, card_id: PublicId, nickname: str | None
     ) -> CardView:
         """Trims; blank becomes None; more than 120 characters is a ValidationFailedError."""
-        raise NotImplementedError
+        value = (nickname or "").strip() or None
+        if value is not None and len(value) > MAX_NICKNAME_LENGTH:
+            raise ValidationFailedError.single(
+                "nickname",
+                "TOO_LONG",
+                f"The nickname is limited to {MAX_NICKNAME_LENGTH} characters.",
+            )
+        with self._uow_factory.create() as uow:
+            record = uow.visible_cards.set_display_name(context.user_id, card_id, value)
+            if record is None:
+                raise NotFoundError("The card was not found")
+            uow.commit()
+        return self._presenter.present(record, context.user_display_name)

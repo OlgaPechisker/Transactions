@@ -1,7 +1,8 @@
-"""The signed-in user's profile. Stub: implemented by U4."""
+"""The signed-in user's profile."""
 
 from dataclasses import dataclass
 
+from bank_transactions.domain.errors import AuthenticationError
 from bank_transactions.domain.ids import PublicId
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
 from bank_transactions.services.interfaces import AuthContext, ReviewCounter
@@ -22,4 +23,9 @@ class ProfileService:
         self._review_counter = review_counter
 
     def me(self, context: AuthContext) -> MeView:
-        raise NotImplementedError
+        with self._uow_factory.create() as uow:
+            user = uow.users.get(context.user_id)
+        if user is None:
+            raise AuthenticationError("Authentication is required")
+        pending = self._review_counter.count_visible_unknown_currency(context.user_id)
+        return MeView(user.public_id, user.display_name, user.email, context.csrf_token, pending)

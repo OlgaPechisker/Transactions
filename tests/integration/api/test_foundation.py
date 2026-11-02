@@ -479,7 +479,7 @@ def test_the_stubbed_operations_answer_501_until_they_are_built(
 ):
     token = issue_session().token
 
-    response = client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
+    response = client.get("/api/v1/categorization", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 501
     assert problem(response)["code"] == "NOT_IMPLEMENTED"
