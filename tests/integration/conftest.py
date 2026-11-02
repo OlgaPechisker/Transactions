@@ -7,7 +7,6 @@ only that schema is ever dropped. Nothing here is a mock of the library under te
 import os
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +14,10 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
+from tests.storage.seeds import SeededCard, ServiceForUser, create_claimed_card, create_user
 
-from bank_transactions.domain.enums import IdentifierType, IssuerCode
+from bank_transactions.domain.enums import IssuerCode
 from bank_transactions.domain.errors import IdentityUnresolvedError
-from bank_transactions.domain.ids import AccountId, CardId, OwnerId
-from bank_transactions.domain.keys import OwnerMatchKey
 from bank_transactions.identity.crypto import IdentifierCipher
 from bank_transactions.identity.interfaces import IdentityResolver
 from bank_transactions.identity.models import (
@@ -31,9 +29,9 @@ from bank_transactions.identity.models import (
 )
 from bank_transactions.parsing.default_registry import build_default_registry
 from bank_transactions.parsing.workbook import ExcelWorkbookReader
-from bank_transactions.persistence.commands import NewAccount, NewCard, NewOwner
 from bank_transactions.persistence.db import create_database_engine, upgrade_database
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
+from bank_transactions.persistence.records import UserRecord
 from bank_transactions.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from bank_transactions.services.import_service import StatementImportService
 
@@ -163,38 +161,43 @@ def refusing_resolver() -> RefusingResolver:
 
 
 @pytest.fixture
+def user(factory: UnitOfWorkFactory) -> UserRecord:
+    """The committed user every import in these tests runs for."""
+    return create_user(factory)
+
+
+@pytest.fixture
 def make_service(
     factory: UnitOfWorkFactory,
     cipher: IdentifierCipher,
     answering_resolver: AnsweringResolver,
-) -> Callable[..., StatementImportService]:
-    def make(resolver: IdentityResolver | None = None) -> StatementImportService:
-        return StatementImportService(
-            ExcelWorkbookReader(),
-            build_default_registry(),
-            cipher,
-            resolver or answering_resolver,
-            factory,
+    user: UserRecord,
+) -> Callable[..., ServiceForUser]:
+    def make(resolver: IdentityResolver | None = None) -> ServiceForUser:
+        return ServiceForUser(
+            StatementImportService(
+                ExcelWorkbookReader(),
+                build_default_registry(),
+                cipher,
+                resolver or answering_resolver,
+                factory,
+            ),
+            user.user_id,
         )
 
     return make
 
 
 @pytest.fixture
-def service(make_service: Callable[..., StatementImportService]) -> StatementImportService:
+def service(make_service: Callable[..., ServiceForUser]) -> ServiceForUser:
     return make_service()
 
 
-@dataclass(frozen=True)
-class SeededCard:
-    owner_id: OwnerId
-    account_id: AccountId
-    card_id: CardId
-
-
 @pytest.fixture
-def seed_card(factory: UnitOfWorkFactory, cipher: IdentifierCipher) -> Callable[..., SeededCard]:
-    """Create and commit an owner, an account and a card, as an earlier import would have."""
+def seed_card(
+    factory: UnitOfWorkFactory, cipher: IdentifierCipher, user: UserRecord
+) -> Callable[..., SeededCard]:
+    """Create and commit the user's claim, owner, account and card, as an earlier import would."""
 
     def seed(
         last4: str,
@@ -204,42 +207,17 @@ def seed_card(factory: UnitOfWorkFactory, cipher: IdentifierCipher) -> Callable[
         bank_code: str | None = None,
         same_account_as: SeededCard | None = None,
     ) -> SeededCard:
-        with factory.create() as uow:
-            if same_account_as is not None:
-                card = uow.cards.create(
-                    NewCard(
-                        same_account_as.owner_id,
-                        same_account_as.account_id,
-                        issuer,
-                        cipher.encrypt(IdentifierType.CARD_LAST4, last4),
-                        None,
-                    )
-                )
-                uow.commit()
-                return SeededCard(
-                    same_account_as.owner_id, same_account_as.account_id, card.card_id
-                )
-            match_key = OwnerMatchKey.from_display_name(owner_name)
-            owner = uow.owners.find_by_match_key(match_key) or uow.owners.create(
-                NewOwner(owner_name, match_key)
-            )
-            number = (
-                cipher.encrypt(IdentifierType.ACCOUNT_NUMBER, account_number)
-                if account_number
-                else None
-            )
-            account = uow.accounts.create(NewAccount(owner.owner_id, bank_code, number, None))
-            card = uow.cards.create(
-                NewCard(
-                    owner.owner_id,
-                    account.account_id,
-                    issuer,
-                    cipher.encrypt(IdentifierType.CARD_LAST4, last4),
-                    None,
-                )
-            )
-            uow.commit()
-        return SeededCard(owner.owner_id, account.account_id, card.card_id)
+        return create_claimed_card(
+            factory,
+            cipher,
+            user,
+            last4,
+            issuer,
+            owner_name,
+            account_number,
+            bank_code,
+            same_account_as,
+        )
 
     return seed
 

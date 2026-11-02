@@ -1,9 +1,10 @@
+import re
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 from bank_transactions.domain.enums import ImportStatus, IssuerCode
-from bank_transactions.domain.errors import PersistenceError
+from bank_transactions.domain.errors import ImportInProgressError, PersistenceError
 from bank_transactions.domain.ids import ImportRunId
 from bank_transactions.persistence.commands import ImportRunOutcome, NewImportRun
 
@@ -11,6 +12,10 @@ pytestmark = pytest.mark.postgres
 
 LABEL = "run-" + "ab" * 6
 SHA = "f" * 64
+
+
+def sha(number: int) -> str:
+    return f"{number:064x}"
 
 
 def run_row(sql, run_id):
@@ -33,6 +38,37 @@ def outcome(status=ImportStatus.SUCCESS, finished_at=None, issuer=IssuerCode.MAX
         counts.get("skipped", 1),
         counts.get("summary"),
     )
+
+
+def test_a_second_running_import_of_the_same_file_is_an_import_in_progress_conflict(factory):
+    with factory.create() as uow:
+        uow.import_runs.start_run(NewImportRun(LABEL, LABEL, SHA, datetime.now(UTC)))
+        uow.commit()
+
+    with factory.create() as uow, pytest.raises(ImportInProgressError):
+        uow.import_runs.start_run(NewImportRun("other", "other", SHA, datetime.now(UTC)))
+
+
+def test_a_finished_import_does_not_block_importing_the_same_file_again(factory, start_run):
+    with factory.create() as uow:
+        first = uow.import_runs.start_run(NewImportRun(LABEL, LABEL, SHA, datetime.now(UTC)))
+        uow.import_runs.finish_run(first, outcome())
+        uow.commit()
+
+    with factory.create() as uow:
+        second = uow.import_runs.start_run(NewImportRun(LABEL, LABEL, SHA, datetime.now(UTC)))
+        uow.commit()
+
+    assert second != first
+
+
+def test_a_run_has_a_public_id_that_can_be_read_back(factory):
+    with factory.create() as uow:
+        run_id = uow.import_runs.start_run(NewImportRun(LABEL, LABEL, SHA, datetime.now(UTC)))
+        public_id = uow.import_runs.public_id(run_id)
+        uow.commit()
+
+    assert re.fullmatch(r"imp_[a-z2-7]{26}", public_id)
 
 
 def test_a_started_run_is_running_with_unknown_issuer_and_zero_counts(factory, sql):
@@ -127,14 +163,14 @@ def test_sweep_fails_only_running_runs_started_before_the_utc_cutoff(factory, sq
     finished_at = datetime(2026, 7, 2, 0, 0, tzinfo=UTC)
     with factory.create() as uow:
         stale = uow.import_runs.start_run(
-            NewImportRun(LABEL, LABEL, SHA, cutoff - timedelta(hours=2))
+            NewImportRun(LABEL, LABEL, sha(1), cutoff - timedelta(hours=2))
         )
-        boundary = uow.import_runs.start_run(NewImportRun(LABEL, LABEL, SHA, cutoff))
+        boundary = uow.import_runs.start_run(NewImportRun(LABEL, LABEL, sha(2), cutoff))
         fresh = uow.import_runs.start_run(
-            NewImportRun(LABEL, LABEL, SHA, cutoff + timedelta(hours=1))
+            NewImportRun(LABEL, LABEL, sha(3), cutoff + timedelta(hours=1))
         )
         done = uow.import_runs.start_run(
-            NewImportRun(LABEL, LABEL, SHA, cutoff - timedelta(hours=3))
+            NewImportRun(LABEL, LABEL, sha(4), cutoff - timedelta(hours=3))
         )
         uow.import_runs.finish_run(done, outcome(ImportStatus.SUCCESS))
         uow.commit()

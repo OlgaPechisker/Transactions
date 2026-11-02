@@ -23,6 +23,7 @@ from bank_transactions.domain.ids import (
     ImportRunId,
     InstallmentPlanId,
     OwnerId,
+    PublicId,
     TransactionId,
     UserId,
 )
@@ -57,11 +58,13 @@ from bank_transactions.persistence.orm.models import (
     ReviewReasonRow,
     TransactionRow,
 )
+from bank_transactions.persistence.public_ids import new_public_id
 from bank_transactions.persistence.records import (
     AccountRecord,
     CardLookup,
     CardRecord,
     OwnerRecord,
+    PlaceholderOwnerRecord,
 )
 
 KEY_CHUNK_SIZE = 1000
@@ -84,14 +87,21 @@ def _code(currency: Currency | None) -> str | None:
     return None if currency is None else currency.code
 
 
-def _require_unscoped(scope: object | None) -> None:
-    """U0 keeps the legacy CLI behaviour; the user-scoped SQL is added by U1."""
-    if scope is not None:
-        raise NotImplementedError("user-scoped persistence is implemented by U1")
-
-
 def _owner_record(row: OwnerRow) -> OwnerRecord:
-    return OwnerRecord(OwnerId(row.id), row.display_name, OwnerMatchKey(row.match_key))
+    return OwnerRecord(
+        OwnerId(row.id), cast(str, row.display_name), OwnerMatchKey(cast(str, row.match_key))
+    )
+
+
+def _placeholder_record(row: OwnerRow) -> PlaceholderOwnerRecord:
+    return PlaceholderOwnerRecord(OwnerId(row.id), UserId(row.user_id))
+
+
+def _owner_user_id(session: Session, owner_id: OwnerId) -> int:
+    user_id = session.scalar(select(OwnerRow.user_id).where(OwnerRow.id == owner_id))
+    if user_id is None:
+        raise PersistenceError("the owner is unknown")
+    return user_id
 
 
 def _account_record(row: AccountRow) -> AccountRecord:
@@ -122,6 +132,7 @@ class SqlImportRunRepository(ImportRunRepository):
     def start_run(self, run: NewImportRun) -> ImportRunId:
         _require_aware(run.started_at)
         row = ImportRunRow(
+            public_id=new_public_id("imp"),
             file_path=run.file_path,
             file_name=run.file_name,
             file_sha256=run.file_sha256,
@@ -131,6 +142,15 @@ class SqlImportRunRepository(ImportRunRepository):
         self._session.add(row)
         self._session.flush()
         return ImportRunId(row.id)
+
+    @translates_database_errors
+    def public_id(self, run_id: ImportRunId) -> PublicId:
+        public_id = self._session.scalar(
+            select(ImportRunRow.public_id).where(ImportRunRow.id == run_id)
+        )
+        if public_id is None:
+            raise PersistenceError("the import run is unknown")
+        return PublicId(public_id)
 
     @translates_database_errors
     def finish_run(self, run_id: ImportRunId, outcome: ImportRunOutcome) -> None:
@@ -178,33 +198,58 @@ class SqlOwnerRepository(OwnerRepository):
 
     @translates_database_errors
     def list_all(self, user_id: UserId | None = None) -> tuple[OwnerRecord, ...]:
-        _require_unscoped(user_id)
-        rows = self._session.scalars(select(OwnerRow).order_by(OwnerRow.id))
-        return tuple(_owner_record(row) for row in rows)
+        query = select(OwnerRow).where(OwnerRow.match_key.is_not(None)).order_by(OwnerRow.id)
+        if user_id is not None:
+            query = query.where(OwnerRow.user_id == user_id)
+        return tuple(_owner_record(row) for row in self._session.scalars(query))
 
     @translates_database_errors
     def get(self, owner_id: OwnerId, user_id: UserId | None = None) -> OwnerRecord | None:
-        _require_unscoped(user_id)
-        row = self._session.get(OwnerRow, owner_id)
+        query = select(OwnerRow).where(OwnerRow.id == owner_id, OwnerRow.match_key.is_not(None))
+        if user_id is not None:
+            query = query.where(OwnerRow.user_id == user_id)
+        row = self._session.scalars(query).one_or_none()
         return None if row is None else _owner_record(row)
 
     @translates_database_errors
     def find_by_match_key(
         self, match_key: OwnerMatchKey, user_id: UserId | None = None
     ) -> OwnerRecord | None:
-        _require_unscoped(user_id)
-        row = self._session.scalars(
-            select(OwnerRow).where(OwnerRow.match_key == match_key.value)
-        ).one_or_none()
+        query = select(OwnerRow).where(OwnerRow.match_key == match_key.value)
+        if user_id is not None:
+            query = query.where(OwnerRow.user_id == user_id)
+        row = self._session.scalars(query).one_or_none()
         return None if row is None else _owner_record(row)
 
     @translates_database_errors
     def create(self, owner: NewOwner) -> OwnerRecord:
-        _require_unscoped(owner.user_id)
-        row = OwnerRow(display_name=owner.display_name, match_key=owner.match_key.value)
+        if owner.user_id is None:
+            raise PersistenceError("an owner belongs to a user")
+        row = OwnerRow(
+            user_id=owner.user_id,
+            display_name=owner.display_name,
+            match_key=owner.match_key.value,
+        )
         self._session.add(row)
         self._session.flush()
         return _owner_record(row)
+
+    @translates_database_errors
+    def find_placeholder(self, user_id: UserId) -> PlaceholderOwnerRecord | None:
+        row = self._session.scalars(
+            select(OwnerRow).where(OwnerRow.user_id == user_id, OwnerRow.match_key.is_(None))
+        ).one_or_none()
+        return None if row is None else _placeholder_record(row)
+
+    @translates_database_errors
+    def create_placeholder(self, user_id: UserId) -> PlaceholderOwnerRecord:
+        self._session.execute(
+            postgresql_insert(OwnerRow).values(user_id=user_id).on_conflict_do_nothing()
+        )
+        found = self.find_placeholder(user_id)
+        if found is None:
+            raise PersistenceError("the placeholder owner could not be created")
+        return found
 
 
 class SqlAccountRepository(AccountRepository):
@@ -213,14 +258,17 @@ class SqlAccountRepository(AccountRepository):
 
     @translates_database_errors
     def list_all(self, user_id: UserId | None = None) -> tuple[AccountRecord, ...]:
-        _require_unscoped(user_id)
-        rows = self._session.scalars(select(AccountRow).order_by(AccountRow.id))
-        return tuple(_account_record(row) for row in rows)
+        query = select(AccountRow).order_by(AccountRow.id)
+        if user_id is not None:
+            query = query.where(AccountRow.user_id == user_id)
+        return tuple(_account_record(row) for row in self._session.scalars(query))
 
     @translates_database_errors
     def get(self, account_id: AccountId, user_id: UserId | None = None) -> AccountRecord | None:
-        _require_unscoped(user_id)
-        row = self._session.get(AccountRow, account_id)
+        query = select(AccountRow).where(AccountRow.id == account_id)
+        if user_id is not None:
+            query = query.where(AccountRow.user_id == user_id)
+        row = self._session.scalars(query).one_or_none()
         return None if row is None else _account_record(row)
 
     @translates_database_errors
@@ -230,8 +278,7 @@ class SqlAccountRepository(AccountRepository):
         account_number_enc: IdentifierToken,
         user_id: UserId | None = None,
     ) -> tuple[AccountRecord, ...]:
-        _require_unscoped(user_id)
-        rows = self._session.scalars(
+        query = (
             select(AccountRow)
             .where(
                 AccountRow.bank_code.is_not_distinct_from(bank_code),
@@ -239,13 +286,16 @@ class SqlAccountRepository(AccountRepository):
             )
             .order_by(AccountRow.id)
         )
-        return tuple(_account_record(row) for row in rows)
+        if user_id is not None:
+            query = query.where(AccountRow.user_id == user_id)
+        return tuple(_account_record(row) for row in self._session.scalars(query))
 
     @translates_database_errors
     def create(self, account: NewAccount) -> AccountRecord:
         token = None if account.account_number_enc is None else bytes(account.account_number_enc)
         row = AccountRow(
             owner_id=account.owner_id,
+            user_id=_owner_user_id(self._session, account.owner_id),
             bank_code=account.bank_code,
             account_number_enc=token,
             display_name=account.display_name,
@@ -254,6 +304,29 @@ class SqlAccountRepository(AccountRepository):
         self._session.flush()
         return _account_record(row)
 
+    @translates_database_errors
+    def find_placeholder(self, owner_id: OwnerId) -> AccountRecord | None:
+        row = self._session.scalars(
+            select(AccountRow).where(
+                AccountRow.owner_id == owner_id,
+                AccountRow.bank_code.is_(None),
+                AccountRow.account_number_enc.is_(None),
+            )
+        ).one_or_none()
+        return None if row is None else _account_record(row)
+
+    @translates_database_errors
+    def create_placeholder(self, owner_id: OwnerId) -> AccountRecord:
+        self._session.execute(
+            postgresql_insert(AccountRow)
+            .values(owner_id=owner_id, user_id=_owner_user_id(self._session, owner_id))
+            .on_conflict_do_nothing()
+        )
+        found = self.find_placeholder(owner_id)
+        if found is None:
+            raise PersistenceError("the placeholder account could not be created")
+        return found
+
 
 class SqlCardRepository(CardRepository):
     def __init__(self, session: Session) -> None:
@@ -261,13 +334,14 @@ class SqlCardRepository(CardRepository):
 
     @translates_database_errors
     def get(self, card_id: CardId, user_id: UserId | None = None) -> CardRecord | None:
-        _require_unscoped(user_id)
-        row = self._session.get(CardRow, card_id)
+        query = select(CardRow).where(CardRow.id == card_id)
+        if user_id is not None:
+            query = query.where(CardRow.user_id == user_id)
+        row = self._session.scalars(query).one_or_none()
         return None if row is None else _card_record(row)
 
     @translates_database_errors
     def find_candidates(self, lookup: CardLookup) -> tuple[CardRecord, ...]:
-        _require_unscoped(lookup.user_id)
         query = select(CardRow).where(
             CardRow.issuer_code == lookup.issuer_code,
             CardRow.last4_enc == bytes(lookup.last4_enc),
@@ -276,14 +350,20 @@ class SqlCardRepository(CardRepository):
             query = query.where(CardRow.account_id == lookup.account_id)
         if lookup.owner_id is not None:
             query = query.where(CardRow.owner_id == lookup.owner_id)
+        if lookup.user_id is not None:
+            query = query.where(CardRow.user_id == lookup.user_id)
         return tuple(_card_record(row) for row in self._session.scalars(query.order_by(CardRow.id)))
 
     @translates_database_errors
     def create(self, card: NewCard) -> CardRecord:
-        _require_unscoped(card.claim_id)
+        if card.claim_id is None:
+            raise PersistenceError("a card needs an ownership claim")
         row = CardRow(
+            public_id=new_public_id("crd"),
             owner_id=card.owner_id,
             account_id=card.account_id,
+            user_id=_owner_user_id(self._session, card.owner_id),
+            claim_id=card.claim_id,
             issuer_code=card.issuer_code,
             last4_enc=bytes(card.last4_enc),
             display_name=card.display_name,
@@ -439,7 +519,7 @@ class SqlTransactionRepository(TransactionRepository):
             TransactionRow.transaction_date,
             TransactionRow.merchant_name_norm,
             TransactionRow.original_amount,
-            TransactionRow.original_currency,
+            TransactionRow.source_original_currency,
             TransactionRow.installment_number,
         )
         rows = self._session.execute(
@@ -477,6 +557,7 @@ class SqlTransactionRepository(TransactionRepository):
 
 def _transaction_row(transaction: NewTransaction) -> TransactionRow:
     return TransactionRow(
+        public_id=new_public_id("txn"),
         card_id=transaction.card_id,
         import_run_id=transaction.import_run_id,
         issuer_reference=transaction.issuer_reference,
@@ -486,6 +567,7 @@ def _transaction_row(transaction: NewTransaction) -> TransactionRow:
         billing_currency=_code(transaction.billing_currency),
         original_amount=transaction.original_amount,
         original_currency=_code(transaction.original_currency),
+        source_original_currency=_code(transaction.original_currency),
         merchant_name_raw=transaction.merchant_name_raw,
         merchant_name_norm=transaction.merchant_name_norm,
         merchant_city=transaction.merchant_city,

@@ -17,7 +17,7 @@ from bank_transactions.domain.errors import (
     IdentityUnresolvedError,
     ParseError,
 )
-from bank_transactions.domain.ids import ImportRunId
+from bank_transactions.domain.ids import ImportRunId, UserId
 from bank_transactions.domain.issues import RowIssue
 from bank_transactions.domain.models import (
     CardHintKey,
@@ -92,7 +92,13 @@ class StatementImportService:
         self._gate = IdentityGate(protector, resolver)
         self._audit = AuditTrail(uow_factory, clock, stale_after)
 
-    def import_file(self, path: Path, *, dry_run: bool = False) -> ImportReport:
+    def find_user(self, email_key: str) -> UserId | None:
+        """The id of the user with this normalised email, for the CLI's `--user` option."""
+        with self._uow_factory.create() as uow:
+            record = uow.users.find_by_email_key(email_key)
+        return None if record is None else record.user_id
+
+    def import_file(self, path: Path, *, user_id: UserId, dry_run: bool = False) -> ImportReport:
         warnings: list[str] = []
         swept = self._audit.sweep_stuck_runs()
         if swept:
@@ -100,13 +106,13 @@ class StatementImportService:
         digest = hash_file(path)
         attempt = _Attempt(self._audit.start(path, digest), dry_run, warnings)
         try:
-            return self._execute(path, attempt)
+            return self._execute(path, attempt, user_id)
         except BaseException as error:
             if not attempt.finish_attempted:
                 self._record_failure(attempt, error)
             raise
 
-    def _execute(self, path: Path, attempt: _Attempt) -> ImportReport:
+    def _execute(self, path: Path, attempt: _Attempt, user_id: UserId) -> ImportReport:
         workbook = self._reader.open(path)
         parser = self._selector.select(workbook)
         context = parser.read_context(workbook)
@@ -114,7 +120,7 @@ class StatementImportService:
         attempt.identifiers = statement_identifiers(context)
         with self._uow_factory.create() as uow:
             try:
-                cards = self._gate.resolve(context, uow)
+                cards = self._gate.resolve(context, uow, user_id)
             except IdentityUnresolvedError as unresolved:
                 uow.rollback()
                 return self._needs_input(attempt, context, unresolved.keys)

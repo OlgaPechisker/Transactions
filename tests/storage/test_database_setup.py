@@ -23,10 +23,13 @@ def test_two_schemas_are_fully_isolated(postgres_dsn, migrated_schema, engine, s
         other = create_database_engine(postgres_dsn, schema=other_name)
         with engine.begin() as connection:
             connection.execute(
-                sa.text("insert into owners (display_name, match_key) values ('A', 'a')")
+                sa.text(
+                    "insert into users (public_id, email, email_key, display_name, password_hash) "
+                    "values ('usr_a', 'a@example.com', 'a@example.com', 'A', 'x')"
+                )
             )
         with other.connect() as connection:
-            visible = connection.execute(sa.text("select count(*) from owners")).scalar_one()
+            visible = connection.execute(sa.text("select count(*) from users")).scalar_one()
         other.dispose()
     finally:
         with admin.begin() as connection:
@@ -34,15 +37,18 @@ def test_two_schemas_are_fully_isolated(postgres_dsn, migrated_schema, engine, s
         admin.dispose()
 
     assert visible == 0
-    assert sql("select count(*) from owners")[0][0] == 1
+    assert sql("select count(*) from users")[0][0] == 1
 
 
 @pytest.mark.postgres
 def test_the_engine_hides_statement_parameters_in_errors(engine):
     with pytest.raises(sa.exc.DBAPIError) as raised, engine.begin() as connection:
         connection.execute(
-            sa.text("insert into owners (display_name, match_key) values (:n, :k), (:n, :k)"),
-            {"n": "SECRET-NAME", "k": "secret-key"},
+            sa.text(
+                "insert into users (public_id, email, email_key, display_name, password_hash) "
+                "values (:p, :n, :k, 'A', 'x'), (:q, :n, :k, 'A', 'x')"
+            ),
+            {"p": "usr_1", "q": "usr_2", "n": "SECRET-NAME", "k": "secret-key"},
         )
 
     assert "[parameters:" not in str(raised.value)
