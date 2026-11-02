@@ -1,4 +1,4 @@
-"""Thin command line over the import library: detect, init-db and import.
+"""Thin command line over the import library: detect, init-db, import and serve (the REST API).
 
 Exit codes: 0 success, 1 failure, 2 usage or configuration, 3 identity input needed,
 4 imported with row errors, 130 interrupted. Output never contains the DSN, the cipher key, file
@@ -18,6 +18,8 @@ from bank_transactions.domain.errors import BankTransactionsError
 from bank_transactions.domain.ids import UserId
 from bank_transactions.services.report import ImportReport
 
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8000
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
@@ -30,6 +32,9 @@ _NEUTRAL_FAILURE = (
     "For an import, see its audit record."
 )
 _INTERRUPTED = "Interrupted: the command was stopped and nothing was reported as completed."
+
+
+ApiServer = Callable[[Settings, str, int], None]
 
 
 class ImportRunner(Protocol):
@@ -120,7 +125,21 @@ def _build_parser(out: IO[str], err: IO[str]) -> argparse.ArgumentParser:
         action="store_true",
         help="never prompt; exit with code 3 when an identity must be chosen",
     )
+    serve = commands.add_parser("serve", help="run the REST API (/api/v1)")
+    serve.add_argument("--dsn", help="database URL (overrides BT_DSN)")
+    serve.add_argument(
+        "--host", default=DEFAULT_HOST, help="interface to bind (default: %(default)s)"
+    )
+    serve.add_argument(
+        "--port", type=_port, default=DEFAULT_PORT, help="port to listen on (default: %(default)s)"
+    )
     return parser
+
+
+def _port(text: str) -> int:
+    if not text.isdecimal() or not 1 <= int(text) <= 65535:
+        raise argparse.ArgumentTypeError("port must be a number from 1 to 65535")
+    return int(text)
 
 
 def main(
@@ -131,6 +150,7 @@ def main(
     stderr: IO[str] | None = None,
     read: Callable[[str], str] = input,
     composition: Composition | None = None,
+    api_server: ApiServer | None = None,
 ) -> int:
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
@@ -142,6 +162,8 @@ def main(
         settings = Settings.from_env(
             os.environ if environ is None else environ, getattr(args, "dsn", None)
         )
+        if args.command == "serve":
+            return _serve(args, settings, api_server or _run_uvicorn, out)
         return _run(args, settings, composition or _default_composition(), out, err, read)
     except ConfigurationError as error:
         print(f"error: {error}", file=err)
@@ -161,6 +183,23 @@ def _default_composition() -> Composition:
     from bank_transactions.bootstrap import DefaultComposition
 
     return DefaultComposition()
+
+
+def _serve(args: argparse.Namespace, settings: Settings, server: ApiServer, out: IO[str]) -> int:
+    settings.require_dsn()
+    settings.require_cipher_key()
+    print(f"Serving the API on http://{args.host}:{args.port}/api/v1", file=out)
+    server(settings, args.host, args.port)
+    return EXIT_OK
+
+
+def _run_uvicorn(settings: Settings, host: str, port: int) -> None:
+    import uvicorn
+
+    from bank_transactions.api.app import create_app
+    from bank_transactions.bootstrap import build_api_composition
+
+    uvicorn.run(create_app(build_api_composition(settings)), host=host, port=port)
 
 
 def _run(
