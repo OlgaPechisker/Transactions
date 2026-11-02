@@ -6,6 +6,7 @@ service), the caller's cards only, and the user-visible shape of the result."""
 
 import io
 import zipfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -71,7 +72,15 @@ def _is_xlsx_container(data: bytes) -> bool:
             archive.open(_CONTENT_TYPES_PART) as part,
         ):
             return _WORKBOOK_CONTENT_TYPE in part.read(_CONTENT_TYPES_LIMIT)
-    except (zipfile.BadZipFile, KeyError, RuntimeError, NotImplementedError, OSError):
+    except (
+        zipfile.BadZipFile,
+        zlib.error,
+        EOFError,
+        KeyError,
+        RuntimeError,
+        NotImplementedError,
+        OSError,
+    ):
         return False
 
 

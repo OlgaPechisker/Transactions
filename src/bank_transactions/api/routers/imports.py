@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Form, Request, Response, UploadFile
 from fastapi.routing import APIRoute
 from pydantic import TypeAdapter, ValidationError
 from starlette.responses import Response as StarletteResponse
+from starlette.types import Message
 
 from bank_transactions.api.dependencies import (
     Composition,
@@ -52,19 +53,41 @@ _SELECTIONS = TypeAdapter(list[IdentitySelectionDto])
 
 
 class _BoundedUploadRoute(APIRoute):
-    """Refuses an oversized body from its declared length, before the multipart form is buffered.
-    The endpoint still checks the real size of the file."""
+    """Refuses an oversized body before the multipart form is buffered: from its declared length,
+    and, for a chunked body with none, as soon as the bytes received exceed the limit. The
+    endpoint still checks the real size of the file."""
 
     def get_route_handler(
         self,
     ) -> Callable[[Request], Coroutine[Any, Any, StarletteResponse]]:
         handler = super().get_route_handler()
+        limit = MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD
 
         async def bounded(request: Request) -> StarletteResponse:
             declared = request.headers.get("content-length", "")
-            if declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD:
+            if declared.isdigit() and int(declared) > limit:
                 raise FileTooLargeError("The file is larger than 20 MiB.")
-            return await handler(request)
+
+            received = 0
+            exceeded = False
+
+            async def counting_receive() -> Message:
+                nonlocal received, exceeded
+                message = await request.receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > limit:
+                        exceeded = True
+                        raise FileTooLargeError("The file is larger than 20 MiB.")
+                return message
+
+            try:
+                return await handler(Request(request.scope, counting_receive))
+            except Exception:
+                # The framework may wrap a failure while reading the body; the size wins.
+                if exceeded:
+                    raise FileTooLargeError("The file is larger than 20 MiB.") from None
+                raise
 
         return bounded
 

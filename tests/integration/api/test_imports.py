@@ -254,12 +254,58 @@ def test_a_body_far_over_the_limit_is_refused_from_its_declared_length(pg_signed
     assert response.json()["code"] == "FILE_TOO_LARGE"
 
 
+def corrupt_content_types_stream(data: bytes) -> bytes:
+    """A real workbook whose [Content_Types].xml deflate stream is garbage."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        info = archive.getinfo("[Content_Types].xml")
+    header = data[info.header_offset : info.header_offset + 30]
+    name_length, extra_length = (
+        int.from_bytes(header[26:28], "little"),
+        int.from_bytes(header[28:30], "little"),
+    )
+    start = info.header_offset + 30 + name_length + extra_length
+    damaged = bytearray(data)
+    damaged[start : start + 16] = b"\xff" * 16
+    return bytes(damaged)
+
+
 @pytest.mark.parametrize("data", [b"not a workbook", b"PK\x03\x04broken"])
 def test_a_file_that_is_not_an_xlsx_container_is_unsupported(pg_signed_in: PgSession, data):
     response = upload(pg_signed_in, data, dry_run=True)
 
     assert response.status_code == 415
     assert response.json()["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
+def test_a_container_with_a_corrupted_compressed_part_is_unsupported(
+    pg_signed_in: PgSession, isracard
+):
+    response = upload(pg_signed_in, corrupt_content_types_stream(isracard), dry_run=True)
+
+    assert response.status_code == 415
+    assert response.json()["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
+def test_a_chunked_body_without_a_content_length_is_cut_off_at_the_limit(
+    pg_signed_in: PgSession,
+):
+    def chunks():
+        for _ in range(40):
+            yield b"x" * MIB
+
+    response = pg_signed_in.client.post(
+        URL,
+        content=chunks(),
+        headers={
+            "content-type": "multipart/form-data; boundary=bt",
+            **pg_signed_in.unsafe_headers,
+        },
+    )
+
+    assert "content-length" not in response.request.headers
+    assert response.status_code == 413
+    assert response.json()["code"] == "FILE_TOO_LARGE"
+    assert response.headers["content-type"].startswith("application/problem+json")
 
 
 def test_a_workbook_that_cannot_be_read_is_unprocessable(pg_signed_in: PgSession, scalar):
