@@ -1,7 +1,5 @@
 """Card DTOs."""
 
-from pydantic import Field
-
 from bank_transactions.api.schemas.common import ApiModel, CardDto
 
 
@@ -10,4 +8,5 @@ class CardListResponse(ApiModel):
 
 
 class UpdateCardRequest(ApiModel):
-    nickname: str | None = Field(max_length=120)
+    # The length limit applies after trimming, so CardService checks it, not this DTO.
+    nickname: str | None
