@@ -51,6 +51,10 @@ only through a separate contract-change commit coordinated by the team leader.
 |---|---|---|---|---|
 | U0 | 1 | 1b471fa | ruff ✔, mypy ✔ (139 files), pytest 1188 passed / 9 known max_parser failures | dev-u0 (Sonnet 5.5). Review: CHANGES REQUIRED |
 | U0 | 2 | f400021 | ruff ✔, mypy ✔, pytest 1212 passed / 9 known max_parser failures | fixes R1–R7. Re-review (Opus 5.5): APPROVE |
+| U3 | 1 | 792d549 | ruff ✔, mypy ✔, pytest 739 (unit scope) passed | dev-u3. Review: APPROVED with NITs R1–R3 |
+| U3 | 2 | 94c52a5 | ruff ✔, mypy ✔, pytest passed | R2 fix. Re-review: APPROVED. Merged to feature branch as 2dc83d3 |
+| U2 | 1 | e711fb1 | ruff ✔, mypy ✔, pytest 674 (contracts/api/application) passed | dev-u2. Review: CHANGES REQUIRED (R1–R4) |
+| U2 | 2 | a3fd6d4 | ruff ✔, mypy ✔, pytest 1365 passed (worktree) | fixes R1–R4. Re-review: APPROVED. Merge pending (after U1) |
 
 ## Review findings
 | Unit | # | Severity | Finding | Decision | Resolved in |
@@ -72,6 +76,17 @@ only through a separate contract-change commit coordinated by the team leader.
 | U0 | R15 | NIT | providers lack `@translates_database_errors`; placeholder methods non-abstract | valid, deferred | owning units |
 | U0 | R16 | NIT | import-graph service exceptions not per-file, no dot boundary | valid, deferred | U5 (owns import services) |
 | U0 | R17 | NIT | U1 must implement non-abstract `SqlImportRunRepository.public_id` | valid, deferred | U1 |
+| U3 | R1 | NIT | plan §A HKDF info label for question ids | valid → team leader | 677e47d (`bt/iq`) |
+| U3 | R2 | NIT | test picked example via glob | valid → dev-u3 | U3 iter 2 |
+| U3 | R3 | NIT | currency_catalogue docstring should exclude XXX/XTS | valid → team leader | 677e47d |
+| U2 | R1 | MAJOR | `_build_openapi` dropped route-declared 422s | valid → dev-u2 | U2 iter 2 |
+| U2 | R2 | MAJOR | malformed JSON / sign-in body errors returned 422, contract says 400 | valid → dev-u2 | U2 iter 2 (400 INVALID_REQUEST, code MALFORMED_JSON) |
+| U2 | R3 | NIT | filter ValueError leaked internal field names | valid → dev-u2 | U2 iter 2 |
+| U2 | R4 | NIT | installment-plan derivation undocumented | valid → dev-u2 | U2 iter 2 (see note below) |
+| U2 | R5 | MINOR | real `POST /sessions` must declare `responses=problem_responses(400, 429)` + `assert_operations_conform(app, "createSession")` | valid, deferred | U4 |
+| U2 | R6 | MINOR | PG-backed `signed_in` fixture (bearer + cookie) | valid, deferred until U1 merges | U2 follow-up |
+
+Installment plan derivation (U2-R4, for U6): perPayment = round_amount(billing_amount) in billing currency; planTotal = plan_total_amount in plan_currency when stored, else perPayment × total in billing currency; remainingPayments = max(total − number, 0); remainingAmount = perPayment × remainingPayments in billing currency. An empty month ∩ from/to range returns 400 INVALID_FILTER (U0-R8 implemented by U2).
 
 Accepted U0 deviations: additive `user_id=None` on existing repos; cookie `bt_session` in openapi; `CurrencyCatalogue.entries()`;
 PATCH /transactions/{id} via `CategoryService.set_override`; trivial `open_bytes`; `pythonpath=["src","."]`; extra files
