@@ -100,7 +100,7 @@ def visible_unknown_currency() -> ColumnElement[bool]:
 def api_original_currency() -> ColumnElement[str | None]:
     """The original currency as the API reports it (validated value, else the source one).
     It is foreign-only: NULL for domestic rows (§B.9 OQ-3), so a domestic transaction never
-    reports an original currency, amount or country."""
+    reports an original currency or amount."""
     return case((_is_foreign(), _t.c.original_currency), else_=None)
 
 
@@ -224,14 +224,6 @@ def transaction_view_select(user_id: UserId) -> Select[Any]:
         .outerjoin(category, category.c.transaction_id == _t.c.id)
         .outerjoin(trip, trip.c.transaction_id == _t.c.id)
     )
-    other_reasons = (
-        select(func.array_agg(sa.cast(_reasons.c.reason, sa.Text)))
-        .where(
-            _reasons.c.transaction_id == _t.c.id,
-            _reasons.c.reason != ReviewReason.UNKNOWN_CURRENCY,
-        )
-        .scalar_subquery()
-    )
     foreign = _foreign.c.transaction_id.is_not(None)
     return select(
         _t.c.id.label("transaction_id"),
@@ -265,7 +257,6 @@ def transaction_view_select(user_id: UserId) -> Select[Any]:
         trip.c.trip_name.label("trip_name"),
         trip.c.membership.label("trip_membership"),
         _t.c.notes.label("notes"),
-        other_reasons.label("other_review_reasons"),
         visible_unknown_currency().label("unknown_currency_visible"),
         _t.c.created_at.label("imported_at"),
         _plans.c.total_amount.label("plan_total_amount"),
@@ -274,9 +265,8 @@ def transaction_view_select(user_id: UserId) -> Select[Any]:
 
 
 def to_view_record(row: Row[Any]) -> TransactionViewRecord:
-    reasons = {ReviewReason(reason) for reason in row.other_review_reasons or ()}
-    if row.unknown_currency_visible:
-        reasons.add(ReviewReason.UNKNOWN_CURRENCY)
+    # Only UNKNOWN_CURRENCY is an API review reason; internal reasons are never exposed.
+    reasons = (ReviewReason.UNKNOWN_CURRENCY,) if row.unknown_currency_visible else ()
     trip = (
         None
         if row.trip_public_id is None
@@ -315,7 +305,7 @@ def to_view_record(row: Row[Any]) -> TransactionViewRecord:
         commission=row.commission,
         trip=trip,
         notes=row.notes,
-        visible_review_reasons=tuple(sorted(reasons)),
+        visible_review_reasons=reasons,
         stated_fx_rate=row.stated_fx_rate,
         imported_at=row.imported_at,
         plan_total_amount=row.plan_total_amount,

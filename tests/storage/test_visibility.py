@@ -144,14 +144,38 @@ def test_a_domestic_transaction_never_shows_an_unknown_currency_review(
     card = seed_card()
     domestic = seed_transaction(card, aggregate_review_reasons={ReviewReason.UNKNOWN_CURRENCY})
     pending = seed_transaction(card, **UNKNOWN_FOREIGN)
-    other = seed_transaction(card, aggregate_review_reasons={ReviewReason.UNMATCHED_FOREIGN_FEE})
 
     seen = views(seed_user())
 
     assert seen[domestic].visible_review_reasons == ()
     assert seen[domestic].original_currency is None
     assert seen[pending].visible_review_reasons == (ReviewReason.UNKNOWN_CURRENCY,)
-    assert seen[other].visible_review_reasons == (ReviewReason.UNMATCHED_FOREIGN_FEE,)
+
+
+def test_internal_review_reasons_are_never_exposed(seed_card, seed_transaction, seed_user, views):
+    card = seed_card()
+    internal_only = seed_transaction(
+        card,
+        aggregate_review_reasons={
+            ReviewReason.UNMATCHED_FOREIGN_FEE,
+            ReviewReason.AMBIGUOUS_INSTALLMENT,
+        },
+    )
+    mixed = seed_transaction(
+        card,
+        **{
+            **UNKNOWN_FOREIGN,
+            "aggregate_review_reasons": {
+                ReviewReason.UNKNOWN_CURRENCY,
+                ReviewReason.UNMATCHED_FOREIGN_FEE,
+            },
+        },
+    )
+
+    seen = views(seed_user())
+
+    assert seen[internal_only].visible_review_reasons == ()
+    assert seen[mixed].visible_review_reasons == (ReviewReason.UNKNOWN_CURRENCY,)
 
 
 def test_a_foreign_transaction_reports_its_original_side_rates_and_card(
