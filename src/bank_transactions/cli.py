@@ -1,4 +1,5 @@
-"""Thin command line over the import library: detect, init-db, import and serve (the REST API).
+"""Thin command line over the import library: detect, init-db, import, create-user and serve (the
+REST API).
 
 Exit codes: 0 success, 1 failure, 2 usage or configuration, 3 identity input needed,
 4 imported with row errors, 130 interrupted. Output never contains the DSN, the cipher key, file
@@ -6,6 +7,7 @@ paths, tracebacks or the text of unexpected errors; only our own sanitised messa
 """
 
 import argparse
+import getpass
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -14,7 +16,7 @@ from typing import IO, NoReturn, Protocol
 
 from bank_transactions.config import ConfigurationError, Settings
 from bank_transactions.domain.enums import ImportStatus, IssuerCode
-from bank_transactions.domain.errors import BankTransactionsError
+from bank_transactions.domain.errors import BankTransactionsError, ValidationFailedError
 from bank_transactions.domain.ids import UserId
 from bank_transactions.services.report import ImportReport
 
@@ -35,6 +37,7 @@ _INTERRUPTED = "Interrupted: the command was stopped and nothing was reported as
 
 
 ApiServer = Callable[[Settings, str, int], None]
+UserCreator = Callable[[Settings, str, str, str], None]  # settings, email, name, password
 
 
 class ImportRunner(Protocol):
@@ -125,6 +128,12 @@ def _build_parser(out: IO[str], err: IO[str]) -> argparse.ArgumentParser:
         action="store_true",
         help="never prompt; exit with code 3 when an identity must be chosen",
     )
+    create_user = commands.add_parser(
+        "create-user", help="create a user who can sign in to the API (the password is prompted)"
+    )
+    create_user.add_argument("--email", required=True, help="the sign-in email")
+    create_user.add_argument("--name", required=True, help="the display name")
+    create_user.add_argument("--dsn", help="database URL (overrides BT_DSN)")
     serve = commands.add_parser("serve", help="run the REST API (/api/v1)")
     serve.add_argument("--dsn", help="database URL (overrides BT_DSN)")
     serve.add_argument(
@@ -151,6 +160,8 @@ def main(
     read: Callable[[str], str] = input,
     composition: Composition | None = None,
     api_server: ApiServer | None = None,
+    user_creator: UserCreator | None = None,
+    read_password: Callable[[str], str] = getpass.getpass,
 ) -> int:
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
@@ -164,6 +175,10 @@ def main(
         )
         if args.command == "serve":
             return _serve(args, settings, api_server or _run_uvicorn, out)
+        if args.command == "create-user":
+            return _create_user(
+                args, settings, user_creator or _provision_user, out, err, read_password
+            )
         return _run(args, settings, composition or _default_composition(), out, err, read)
     except ConfigurationError as error:
         print(f"error: {error}", file=err)
@@ -200,6 +215,35 @@ def _run_uvicorn(settings: Settings, host: str, port: int) -> None:
     from bank_transactions.bootstrap import build_api_composition
 
     uvicorn.run(create_app(build_api_composition(settings)), host=host, port=port)
+
+
+def _create_user(
+    args: argparse.Namespace,
+    settings: Settings,
+    creator: UserCreator,
+    out: IO[str],
+    err: IO[str],
+    read_password: Callable[[str], str],
+) -> int:
+    settings.require_dsn()
+    settings.require_cipher_key()
+    password = read_password("Password: ")
+    if read_password("Repeat password: ") != password:
+        print("error: the passwords do not match.", file=err)
+        return EXIT_USAGE
+    try:
+        creator(settings, args.email, args.name, password)
+    except ValidationFailedError as error:
+        print(f"error: {error.errors[0].message if error.errors else error}", file=err)
+        return EXIT_USAGE
+    print(f"Created user {args.email.strip()}.", file=out)
+    return EXIT_OK
+
+
+def _provision_user(settings: Settings, email: str, display_name: str, password: str) -> None:
+    from bank_transactions.bootstrap import build_api_composition
+
+    build_api_composition(settings).sessions.create_user(email, display_name, password)
 
 
 def _run(

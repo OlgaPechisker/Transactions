@@ -10,8 +10,7 @@ conftest (BT_TEST_DSN)."""
 
 import base64
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from datetime import timedelta
+from dataclasses import dataclass
 from itertools import count
 from typing import Any
 
@@ -40,8 +39,6 @@ from bank_transactions.identity.tokens import HmacTokenService
 from bank_transactions.parsing.workbook import ExcelWorkbookReader
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
 from bank_transactions.persistence.records import UserRecord
-from bank_transactions.ports.clock import Clock
-from bank_transactions.ports.token_service import TokenService
 from bank_transactions.services.analysis_service import AnalysisService
 from bank_transactions.services.card_service import CardPresenter, CardService
 from bank_transactions.services.category_service import CategoryService
@@ -51,7 +48,7 @@ from bank_transactions.services.import_api_service import ImportApiService
 from bank_transactions.services.interfaces import AuthContext, Authenticator
 from bank_transactions.services.profile_service import ProfileService
 from bank_transactions.services.review_counter import UowReviewCounter
-from bank_transactions.services.session_service import SessionService
+from bank_transactions.services.session_service import SESSION_LIFETIME, SessionService
 from bank_transactions.services.transaction_service import TransactionService
 from bank_transactions.services.trip_service import TripService
 
@@ -160,8 +157,6 @@ def signed_in(
 
 # --- Postgres-backed -----------------------------------------------------------------------------
 
-SESSION_LIFETIME = timedelta(hours=12)
-
 
 @dataclass(frozen=True)
 class PgSession:
@@ -185,46 +180,16 @@ class PgSession:
 PgSignIn = Callable[..., PgSession]
 
 
-class StoredSessionAuthenticator(Authenticator):
-    """Reads the real session and user rows, as U4's `SessionAuthenticator` will. TEMPORARY
-    (U2-R7): `pg_composition` swaps it in unconditionally while `SessionAuthenticator` and
-    `SessionRepository` are stubs (hence raw SQL); U4 deletes it together with the swap."""
-
-    def __init__(self, sql: Callable[..., list[Any]], tokens: TokenService, clock: Clock) -> None:
-        self._sql = sql
-        self._tokens = tokens
-        self._clock = clock
-
-    def authenticate(self, token: str) -> AuthContext | None:
-        digest = self._tokens.digest(token)
-        rows = self._sql(
-            "SELECT s.id, s.user_id, u.display_name FROM sessions s "
-            "JOIN users u ON u.id = s.user_id "
-            "WHERE s.token_digest = :digest AND s.revoked_at IS NULL AND s.expires_at > :now",
-            digest=digest,
-            now=self._clock.now(),
-        )
-        if not rows:
-            return None
-        session_id, user_id, display_name = rows[0]
-        return AuthContext(user_id, session_id, self._tokens.csrf_for(digest), display_name)
-
-
 @pytest.fixture
 def pg_composition(
     engine: Engine,
-    sql: Callable[..., list[Any]],
     postgres_dsn: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> ApiComposition:
     """The bootstrap composition, wired to the per-test schema instead of the default one."""
     monkeypatch.setattr(bootstrap, "create_database_engine", lambda dsn: engine)
     settings = Settings(dsn=postgres_dsn, cipher_key=base64.b64encode(CIPHER_KEY).decode())
-    composition = build_api_composition(settings)
-    # TEMPORARY (U2-R7): U4 must delete StoredSessionAuthenticator and this swap; the real
-    # authenticator must then pass these tests.
-    stand_in = StoredSessionAuthenticator(sql, HmacTokenService(CIPHER_KEY), SystemClock())
-    return replace(composition, authenticator=stand_in)
+    return build_api_composition(settings)
 
 
 @pytest.fixture
@@ -248,7 +213,7 @@ def pg_sign_in(
     """`pg_sign_in(email=..., display_name=..., mode=...)`: commits the user (or reuses the one
     with that email) and a fresh session row, and returns a `PgSession` with its own client.
     `mode` defaults to the current `auth_mode` parameter. The session row is inserted with SQL
-    because SessionRepository is still a stub (U4)."""
+    so that these fixtures do not depend on the sign-in endpoint under test."""
     tokens, clock = HmacTokenService(CIPHER_KEY), SystemClock()
 
     def sign_in(
