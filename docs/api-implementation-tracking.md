@@ -60,6 +60,15 @@ only through a separate contract-change commit coordinated by the team leader.
 | U2 | 3 | 9f3396b | ruff ✔, mypy ✔, pytest 1439 passed incl. PG | U2-R6 PG-backed signed-in fixtures. Review: CHANGES REQUIRED (R7–R9) |
 | U2 | 4 | a89b284 | ruff ✔, mypy ✔, pytest 1440 passed incl. PG | fixes R7–R8. Re-review: APPROVED. Merged as 6ea6fde |
 | integration | – | 601b401 | feature branch: ruff ✔, mypy ✔, pytest 1418 passed / 9 known max_parser failures | after U1+U2 merge |
+| U4 | 1 | 28b5e24 | ruff ✔, mypy ✔, pytest 1543 passed incl. PG | dev-u4 (cycle 3). Review (tech-lead-c3): APPROVED with NITs R1–R2 |
+| U4 | 2 | aef0f94 | ruff ✔, mypy ✔, pytest 1544 passed | fixes R1–R2. Re-review: APPROVED. Merged as 325f601 |
+| U6 | 1 | 20460b9 | ruff ✔, mypy ✔, pytest 1609 passed | dev-u6. Review: CHANGES REQUIRED (R1–R5, minor) |
+| U6 | sync | bd27111 | – | merge feature (U4) into unit/U6 |
+| U6 | 2 | 23703dc | ruff ✔, mypy ✔, pytest 1717 passed | fixes R1–R5. Re-review: APPROVED. Merged as 091552c |
+| U5 | 1 | 29d564d | ruff ✔, mypy ✔, pytest 1479 passed excl. test_imports (30 failures pending U4 cards_visible) | dev-u5. Review: CHANGES REQUIRED (R1–R2 minor, R3 note) |
+| U5 | sync | b8e91c5 | pytest 1655 passed | merge feature (U4) into unit/U5 |
+| U5 | 2 | 918e0f8 | ruff ✔, mypy ✔, pytest 1659 passed | fixes R1–R2. Re-review: APPROVED. Merged as 930af63 |
+| integration | – | 930af63 | feature branch: ruff ✔, mypy ✔, pytest 1823 passed / 9 known max_parser failures | cycle 3 complete |
 
 ## Review findings
 | Unit | # | Severity | Finding | Decision | Resolved in |
@@ -99,6 +108,19 @@ only through a separate contract-change commit coordinated by the team leader.
 | U1 | R4 | NIT | frozen `create_or_get` docstring said "any owner" | valid → team leader | bfa8e97 |
 | U1 | note | – | `accounts.list_all` includes placeholder accounts (no bank/number); repository `user_id` scoping is optional — later units must always pass it | open | U5 / all |
 | U0 | R17 | – | `public_id` implemented | resolved | U1 iter 1 |
+| U4 | R1 | NIT | rehash computed inside UoW | valid → dev-u4 | U4 iter 2 |
+| U4 | R2 | NIT | nickname maxLength missing in generated OpenAPI | valid → dev-u4 | U4 iter 2 |
+| U4 | note | – | 501 probe in test_skeleton/test_foundation moved to `/api/v1/categorization`; U7 must move it again | open | U7 |
+| U6 | R1 | MINOR | domestic and pending rows shared the null currency group | valid → dev-u6 | U6 iter 2 (pending key UNKNOWN; domestic null "No original currency") |
+| U6 | R2 | MINOR | filter_options duplicated U4 card query | valid → dev-u6 | U6 iter 2 |
+| U6 | R3 | MINOR | test-only UoW proxy hid stubbed visible_cards/trips | valid → dev-u6 (cards); trips deferred | U8: delete the TEMPORARY trips stand-in in test_transactions.py, run on real composition, add two-user trips check to filter-options isolation test |
+| U6 | R4 | NIT | day/week keys depended on DateStyle | valid → dev-u6 | U6 iter 2 |
+| U6 | R5 | NIT | duplicated `group:` prefix | valid → dev-u6 | U6 iter 2 (cross-ref comments) |
+| U5 | R1 | MINOR | corrupt ZIP → 500 instead of 415 | valid → dev-u5 | U5 iter 2 |
+| U5 | R2 | MINOR | 413 only on declared Content-Length | valid → dev-u5 | U5 iter 2 |
+| U5 | R3 | NIT | row ParseError surfaces after identity/claims (sequence diagram order) — §A "parse error after detection" means read_context failures | recorded | – |
+| U5 | note | – | `services/report.py` additive `rows_pending_currency` touched by U5 (allowed) | accepted | – |
+| U3 | R4 | MINOR | `ExcelWorkbookReader._load` may not catch zlib.error → 500 instead of 422 UNREADABLE_WORKBOOK | valid, deferred | U11 |
 
 Installment plan derivation (U2-R4, for U6): perPayment = round_amount(billing_amount) in billing currency; planTotal = plan_total_amount in plan_currency when stored, else perPayment × total in billing currency; remainingPayments = max(total − number, 0); remainingAmount = perPayment × remainingPayments in billing currency. An empty month ∩ from/to range returns 400 INVALID_FILTER (U0-R8 implemented by U2).
 
