@@ -78,6 +78,7 @@ from bank_transactions.persistence.interfaces import (
     UnitOfWork,
     UnitOfWorkFactory,
     UserRepository,
+    VisibleCardRepository,
 )
 from bank_transactions.persistence.records import (
     AccountRecord,
@@ -85,7 +86,9 @@ from bank_transactions.persistence.records import (
     CardRecord,
     ClaimRecord,
     OwnerRecord,
+    PlaceholderOwnerRecord,
     UserRecord,
+    VisibleCardRecord,
 )
 from bank_transactions.ports.identifier_protector import IdentifierProtector
 from bank_transactions.ports.parser_selector import ParserSelector
@@ -162,6 +165,7 @@ class DomainState:
     cards: dict[int, CardRecord] = field(default_factory=dict)
     plans: dict[int, NewInstallmentPlan] = field(default_factory=dict)
     transactions: list[NewTransactionAggregate] = field(default_factory=list)
+    placeholder_owners: dict[int, int] = field(default_factory=dict)
 
 
 class FakeDatabase:
@@ -192,6 +196,9 @@ class FakeRuns(ImportRunRepository):
         runs[run_id] = RunRow(run)
         self._uow.touch("audit")
         return ImportRunId(run_id)
+
+    def public_id(self, run_id: ImportRunId) -> PublicId:
+        return PublicId(f"imp_{run_id}")
 
     def finish_run(self, run_id: ImportRunId, outcome: ImportRunOutcome) -> None:
         self._uow.db.finish_calls += 1
@@ -291,7 +298,8 @@ class FakeOwners(OwnerRepository):
         self._uow = uow
 
     def list_all(self, user_id: UserId | None = None) -> tuple[OwnerRecord, ...]:
-        return tuple(self._uow.domain.owners.values())
+        placeholders = set(self._uow.domain.placeholder_owners.values())
+        return tuple(o for o in self._uow.domain.owners.values() if o.owner_id not in placeholders)
 
     def get(self, owner_id: OwnerId, user_id: UserId | None = None) -> OwnerRecord | None:
         return self._uow.domain.owners.get(owner_id)
@@ -300,6 +308,19 @@ class FakeOwners(OwnerRepository):
         self, match_key: OwnerMatchKey, user_id: UserId | None = None
     ) -> OwnerRecord | None:
         return next((o for o in self.list_all() if o.match_key == match_key), None)
+
+    def find_placeholder(self, user_id: UserId) -> PlaceholderOwnerRecord | None:
+        owner_id = self._uow.domain.placeholder_owners.get(user_id)
+        return None if owner_id is None else PlaceholderOwnerRecord(OwnerId(owner_id), user_id)
+
+    def create_placeholder(self, user_id: UserId) -> PlaceholderOwnerRecord:
+        owners = self._uow.domain.owners
+        owner_id = OwnerId(_next_id(owners))
+        key = OwnerMatchKey.from_display_name(f"placeholder {user_id}")
+        owners[owner_id] = OwnerRecord(owner_id, "", key)
+        self._uow.domain.placeholder_owners[user_id] = owner_id
+        self._uow.touch("domain")
+        return PlaceholderOwnerRecord(owner_id, user_id)
 
     def create(self, owner: NewOwner) -> OwnerRecord:
         if self.find_by_match_key(owner.match_key) is not None:
@@ -398,6 +419,42 @@ class FakeCards(CardRepository):
         domain.cards[record.card_id] = record
         self._uow.touch("domain")
         return record
+
+
+class FakeVisibleCards(VisibleCardRepository):
+    """A user sees the cards of the claims they own; the placeholder owner has no name."""
+
+    def __init__(self, uow: "FakeUnitOfWork") -> None:
+        self._uow = uow
+
+    def list_visible(self, user_id: UserId) -> tuple[VisibleCardRecord, ...]:
+        domain = self._uow.domain
+        owned = {
+            (c.issuer_code, c.last4_enc) for c in domain.claims.values() if c.user_id == user_id
+        }
+        placeholders = set(domain.placeholder_owners.values())
+        return tuple(
+            VisibleCardRecord(
+                card.card_id,
+                PublicId(f"crd_{card.card_id}"),
+                card.issuer_code,
+                card.last4_enc,
+                card.display_name,
+                None
+                if card.owner_id in placeholders
+                else domain.owners[card.owner_id].display_name,
+            )
+            for card in domain.cards.values()
+            if (card.issuer_code, card.last4_enc) in owned
+        )
+
+    def get_visible(self, user_id: UserId, public_id: PublicId) -> VisibleCardRecord | None:
+        return next((c for c in self.list_visible(user_id) if c.public_id == public_id), None)
+
+    def set_display_name(
+        self, user_id: UserId, public_id: PublicId, display_name: str | None
+    ) -> VisibleCardRecord | None:
+        raise NotImplementedError
 
 
 class FakePlans(InstallmentPlanRepository):
@@ -519,6 +576,10 @@ class FakeUnitOfWork(RepositorySlots, UnitOfWork):
     @property
     def claims(self) -> ClaimRepository:
         return FakeClaims(self)
+
+    @property
+    def visible_cards(self) -> VisibleCardRepository:
+        return FakeVisibleCards(self)
 
     @property
     def installment_plans(self) -> InstallmentPlanRepository:

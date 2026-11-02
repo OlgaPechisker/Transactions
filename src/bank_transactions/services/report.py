@@ -18,7 +18,8 @@ __all__ = [
 class ImportReport:
     """Outcome of one import attempt. Contains no plaintext identifiers: unresolved cards are
     sanitised labels (e.g. "MAX card 2 of 3"), warnings are safe sentences. For a dry run the
-    counts describe what would have been imported."""
+    counts describe what would have been imported. `rows_needing_review` counts every review
+    reason (the CLI shows them all); `rows_pending_currency` only the user-visible one."""
 
     run_id: ImportRunId
     status: ImportStatus
@@ -32,6 +33,7 @@ class ImportReport:
     warnings: tuple[str, ...] = ()
     unresolved_cards: tuple[str, ...] = ()
     dry_run: bool = False
+    rows_pending_currency: int = 0
 
     def __post_init__(self) -> None:
         for name in ("issues", "warnings", "unresolved_cards"):

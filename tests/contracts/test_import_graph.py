@@ -47,6 +47,15 @@ CONTRACT_MODULES = [
 ]
 
 
+def is_module_or_child(name, prefix):
+    """A dot boundary: `a.b` matches `a.b` and `a.b.c`, never `a.bc`."""
+    return name == prefix or name.startswith(prefix + ".")
+
+
+def is_in_modules(name, modules):
+    return any(is_module_or_child(name, module) for module in modules)
+
+
 def loaded_after_import(module):
     script = "import sys, json; import " + module + "; print(json.dumps(sorted(sys.modules)))"
     completed = subprocess.run(
@@ -81,7 +90,8 @@ def test_each_domain_module_depends_on_no_other_application_package(module):
     sibling_packages = [
         name
         for name in loaded
-        if name.startswith("bank_transactions.") and not name.startswith("bank_transactions.domain")
+        if name.startswith("bank_transactions.")
+        and not is_module_or_child(name, "bank_transactions.domain")
     ]
     assert sibling_packages == []
 
@@ -93,7 +103,7 @@ def test_service_report_depends_only_on_domain():
         name
         for name in loaded
         if name.startswith("bank_transactions.")
-        and not name.startswith(("bank_transactions.domain", "bank_transactions.services"))
+        and not is_in_modules(name, ("bank_transactions.domain", "bank_transactions.services"))
     ]
     assert outside_domain == []
 
@@ -125,7 +135,7 @@ def test_the_import_service_runtime_loads_no_heavy_library_or_concrete_adapter(m
     loaded = loaded_after_import(module)
 
     heavy = [name for name in loaded if name.split(".")[0] in HEAVY_LIBRARIES]
-    adapters = [name for name in loaded if name.startswith(CONCRETE_ADAPTER_MODULES)]
+    adapters = [name for name in loaded if is_in_modules(name, CONCRETE_ADAPTER_MODULES)]
     assert (heavy, adapters) == ([], [])
 
 
@@ -184,24 +194,39 @@ def test_importing_the_api_loads_no_database_library_or_implementation():
     loaded = loaded_after_import("bank_transactions.api.app")
 
     database = [name for name in loaded if name.split(".")[0] in DATABASE_LIBRARIES]
-    implementations = [name for name in loaded if name.startswith(CONCRETE_ADAPTER_MODULES)]
+    implementations = [name for name in loaded if is_in_modules(name, CONCRETE_ADAPTER_MODULES)]
     assert (database, implementations) == ([], [])
 
 
 PERSISTENCE_CONTRACTS = ("interfaces", "records", "commands")
-# Pre-existing import-pipeline services legitimately use these; the REST services must not
-# add to this list.
-SERVICE_EXCEPTIONS = (
-    "bank_transactions.identity.models",
-    "bank_transactions.identity.interfaces",
-    "bank_transactions.parsing.interfaces",
-    "bank_transactions.persistence.mappers",
-)
+# The import pipeline's services legitimately use these modules, each in its own file only; no
+# other service may add to this table.
+SERVICE_EXCEPTIONS = {
+    "deduplication.py": (
+        "bank_transactions.identity.models",
+        "bank_transactions.persistence.mappers",
+    ),
+    "identity_gate.py": (
+        "bank_transactions.identity.interfaces",
+        "bank_transactions.identity.models",
+    ),
+    "import_api_service.py": (
+        "bank_transactions.identity.interfaces",
+        "bank_transactions.identity.models",
+    ),
+    "import_service.py": (
+        "bank_transactions.identity.interfaces",
+        "bank_transactions.identity.models",
+        "bank_transactions.parsing.interfaces",
+        "bank_transactions.persistence.mappers",
+    ),
+}
 
 
-def allowed_for_services(name):
+def allowed_for_services(name, path):
     parts = name.split(".")
-    if parts[1] in ("domain", "ports", "services") or name.startswith(SERVICE_EXCEPTIONS):
+    excepted = SERVICE_EXCEPTIONS.get(path.name, ())
+    if parts[1] in ("domain", "ports", "services") or is_in_modules(name, excepted):
         return True
     return parts[1] == "persistence" and len(parts) > 2 and parts[2] in PERSISTENCE_CONTRACTS
 
@@ -213,7 +238,7 @@ def test_services_depend_only_on_domain_ports_and_the_persistence_contracts(path
     outside = sorted(
         name
         for name in names
-        if name.startswith("bank_transactions.") and not allowed_for_services(name)
+        if name.startswith("bank_transactions.") and not allowed_for_services(name, path)
     )
 
     assert roots & set(WEB_LIBRARIES + DATABASE_LIBRARIES) == set()
@@ -237,7 +262,7 @@ def test_only_the_composition_root_imports_concrete_classes_from_another_package
         for module in CONCRETE_ADAPTER_MODULES
         if module != "bank_transactions.bootstrap"
         and module.split(".")[1] != own_package
-        and any(name.startswith(module) for name in imported_modules(path))
+        and any(is_module_or_child(name, module) for name in imported_modules(path))
     ]
 
     assert concrete == []
