@@ -58,6 +58,16 @@ def test_a_cookie_mutation_without_the_csrf_header_is_forbidden(pg_signed_in: Pg
     assert response.json()["code"] == "CSRF_VALIDATION_FAILED"
 
 
+@pytest.mark.parametrize("auth_mode", ["cookie"])
+def test_a_cookie_mutation_with_a_wrong_csrf_token_is_forbidden(pg_signed_in: PgSession):
+    response = pg_signed_in.client.post(
+        "/api/v1/probe/mutate", headers={"X-CSRF-Token": "not-the-session-token"}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "CSRF_VALIDATION_FAILED"
+
+
 def test_a_mutation_with_the_unsafe_headers_succeeds_in_both_modes(pg_signed_in: PgSession):
     response = pg_signed_in.client.post(
         "/api/v1/probe/mutate", headers=pg_signed_in.unsafe_headers

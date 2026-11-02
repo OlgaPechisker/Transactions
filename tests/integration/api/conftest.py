@@ -186,9 +186,9 @@ PgSignIn = Callable[..., PgSession]
 
 
 class StoredSessionAuthenticator(Authenticator):
-    """Reads the real session and user rows, as U4's `SessionAuthenticator` will. Used only while
-    that class is a stub (SessionRepository is one too, hence raw SQL); `pg_composition` stops
-    swapping it in once the real authenticator is implemented."""
+    """Reads the real session and user rows, as U4's `SessionAuthenticator` will. TEMPORARY
+    (U2-R7): `pg_composition` swaps it in unconditionally while `SessionAuthenticator` and
+    `SessionRepository` are stubs (hence raw SQL); U4 deletes it together with the swap."""
 
     def __init__(self, sql: Callable[..., list[Any]], tokens: TokenService, clock: Clock) -> None:
         self._sql = sql
@@ -210,14 +210,6 @@ class StoredSessionAuthenticator(Authenticator):
         return AuthContext(user_id, session_id, self._tokens.csrf_for(digest), display_name)
 
 
-def _is_implemented(authenticator: Authenticator) -> bool:
-    try:
-        authenticator.authenticate("implementation-probe")
-    except NotImplementedError:
-        return False
-    return True
-
-
 @pytest.fixture
 def pg_composition(
     engine: Engine,
@@ -229,8 +221,8 @@ def pg_composition(
     monkeypatch.setattr(bootstrap, "create_database_engine", lambda dsn: engine)
     settings = Settings(dsn=postgres_dsn, cipher_key=base64.b64encode(CIPHER_KEY).decode())
     composition = build_api_composition(settings)
-    if _is_implemented(composition.authenticator):
-        return composition
+    # TEMPORARY (U2-R7): U4 must delete StoredSessionAuthenticator and this swap; the real
+    # authenticator must then pass these tests.
     stand_in = StoredSessionAuthenticator(sql, HmacTokenService(CIPHER_KEY), SystemClock())
     return replace(composition, authenticator=stand_in)
 
