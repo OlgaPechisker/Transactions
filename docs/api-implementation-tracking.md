@@ -39,6 +39,7 @@ only through a separate contract-change commit coordinated by the team leader.
 | Unit | Iter | Commit | Verification | Notes |
 |---|---|---|---|---|
 | U0 | 1 | 1b471fa | ruff ✔, mypy ✔ (139 files), pytest 1188 passed / 9 known max_parser failures | dev-u0 (Sonnet 5.5). Review: CHANGES REQUIRED |
+| U0 | 2 | f400021 | ruff ✔, mypy ✔, pytest 1212 passed / 9 known max_parser failures | fixes R1–R7. Re-review (Opus 5.5): APPROVE |
 
 ## Review findings
 | Unit | # | Severity | Finding | Decision | Resolved in |
@@ -58,6 +59,8 @@ only through a separate contract-change commit coordinated by the team leader.
 | U0 | R13 | NIT | CV batch DTOs allow extra keys | valid, deferred | U10 |
 | U0 | R14 | NIT | single-value sort accepts lists | valid, deferred | U5/U8 |
 | U0 | R15 | NIT | providers lack `@translates_database_errors`; placeholder methods non-abstract | valid, deferred | owning units |
+| U0 | R16 | NIT | import-graph service exceptions not per-file, no dot boundary | valid, deferred | U5 (owns import services) |
+| U0 | R17 | NIT | U1 must implement non-abstract `SqlImportRunRepository.public_id` | valid, deferred | U1 |
 
 Accepted U0 deviations: additive `user_id=None` on existing repos; cookie `bt_session` in openapi; `CurrencyCatalogue.entries()`;
 PATCH /transactions/{id} via `CategoryService.set_override`; trivial `open_bytes`; `pythonpath=["src","."]`; extra files
