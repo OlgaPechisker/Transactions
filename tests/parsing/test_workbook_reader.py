@@ -186,3 +186,33 @@ def test_the_reader_does_not_hide_unrelated_warnings():
         ExcelWorkbookReader().read_stream(workbook_stream(build))
 
     assert [str(item.message) for item in caught] == ["unrelated"]
+
+
+def test_open_bytes_reads_an_example_workbook_like_open_does():
+    example = EXAMPLES / "9462_02_2026.xlsx"
+
+    assert ExcelWorkbookReader().open_bytes(example.read_bytes()) == ExcelWorkbookReader().open(
+        example
+    )
+
+
+def test_open_bytes_rejects_garbage_like_open_rejects_a_corrupt_file(tmp_path):
+    garbage = b"definitely not a workbook"
+    corrupt = tmp_path / "corrupt.xlsx"
+    corrupt.write_bytes(garbage)
+
+    with pytest.raises(ParseError) as from_bytes:
+        ExcelWorkbookReader().open_bytes(garbage)
+    with pytest.raises(ParseError) as from_path:
+        ExcelWorkbookReader().open(corrupt)
+
+    assert str(from_bytes.value) == str(from_path.value)
+    assert "definitely" not in str(from_bytes.value)
+
+
+def test_open_bytes_rejects_empty_and_truncated_content():
+    good = workbook_stream(lambda book: book.active.append(["a"])).getvalue()
+
+    for data in (b"", good[: len(good) // 2]):
+        with pytest.raises(ParseError):
+            ExcelWorkbookReader().open_bytes(data)
