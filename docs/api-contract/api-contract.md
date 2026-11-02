@@ -4,7 +4,7 @@ Status: **current V1 contract; implementation not started**. Machine-readable ve
 
 This is the canonical API contract. New persistence is required for users, ownership claims, sessions, trips, categories, and currency-validation audit.
 
-**Implementation status:** not started. Exact provider interfaces, DDL, and the work breakdown are in [Phase 2](../api-design-phase-2.md). Phase 2 §A lists contract amendments the implementation applies first (nullable `ImportIssue.sheetPosition`/`row`, owner-name fallback).
+**Implementation status:** in progress (U0 contract freeze done). Exact provider interfaces, DDL, and the work breakdown are in [Phase 2](../api-design-phase-2.md). The Phase 2 §A amendments are applied in this contract: `ImportIssue.sheetPosition`/`row` are always present and nullable, the session cookie is named `bt_session`, and `ownerName` falls back to the caller's display name. The open-question defaults of Phase 2 §B.9 (OQ-1…OQ-9) apply until they are confirmed.
 
 **Out of scope for v1:** sharing between users (invitations, "Shared with me", merged view, view-mode preference). Every endpoint returns and changes only the caller's own data.
 
@@ -20,7 +20,7 @@ This is the canonical API contract. New persistence is required for users, owner
 - Planned HTTP stack: FastAPI + Uvicorn. Services and database providers remain synchronous and must not block the ASGI event loop.
 - `POST /sessions` exchanges credentials for a session. The session is returned both as an `HttpOnly; Secure; SameSite=Lax` cookie and as a bearer token (`Authorization: Bearer <token>`) for non-browser clients.
 - **Every endpoint except `POST /sessions` requires authentication.** Missing or invalid credentials → `401`.
-- Requests that change state with cookie auth must carry an `X-CSRF-Token` header (value from `GET /me`).
+- Requests that change state with cookie auth (cookie name `bt_session`) must carry an `X-CSRF-Token` header (value from `GET /me`).
 - Sessions expire after 12 absolute hours, with no sliding extension. Store token digests, not raw tokens.
 - Bearer credentials take precedence over cookies. Invalid bearer credentials return `401` without cookie fallback. Cookie-only mutations with missing/invalid CSRF return `403 CSRF_VALIDATION_FAILED`.
 - After 10 failed sign-ins in 15 minutes, throttle independently by normalized email and client IP with `429`. State is shared across workers; no permanent account lockout.
@@ -86,7 +86,7 @@ Common status codes: `400` malformed request / bad query param, `401` not authen
 Error messages never contain card numbers, account numbers or file paths.
 
 ### 1.9 Shared shapes
-- **CardRef** – `{ "id", "label", "issuer": "ISRACARD|MAX|CAL", "last4", "nickname", "ownerName" }`. `label` is the server-computed display label (e.g. `"Dana · Max ••5530"`).
+- **CardRef** – `{ "id", "label", "issuer": "ISRACARD|MAX|CAL", "last4", "nickname", "ownerName" }`. `label` is the server-computed display label (e.g. `"Dana · Max ••5530"`). `ownerName` is the card owner's display name; when the owner is a placeholder without one it is the caller's own display name (and so is the name used in `label`).
 - **TripRef** – `{ "id", "name", "membership": "TAGGED|AUTO" }`.
 - **Category** – `{ "bank": "מזון וצריכה", "custom": "Groceries"|null, "effective": "Groceries", "source": "OVERRIDE|RULE|MAPPING|BANK" }`. Effective category = override › newest matching rule › bank-category mapping › bank category.
 - **ReviewReason** – user-visible review reasons. **v1 exposes `UNKNOWN_CURRENCY` only.** `UNMATCHED_FOREIGN_FEE` and `AMBIGUOUS_INSTALLMENT` stay in the database enum (still raised by the parser, for monitoring) but are never returned or accepted by the API.
@@ -239,7 +239,7 @@ Maps to `UseCard` / `CreateCard`. Identity question ids are **deterministic** (d
   - No `fileName` is returned or persisted; the browser keeps the selected name. Safe hash-derived audit labels may remain internal.
   - When `status = NEEDS_INPUT`, `identityQuestions` is non-empty. Audit may persist, but owners, accounts, cards, ownership claims, plans, and transactions do not.
   - `needsReview` / `needsReviewByReason` are computed in memory from the import report; nothing extra is stored. They count user-visible reasons only (v1: `UNKNOWN_CURRENCY`), so `needsReview` may be lower than the report's `rows_needing_review`. Step 4 shows a single link to the currency-validation queue (§6.5).
-  - `issues` are response-only. The UI shows "Sheet {sheetPosition}"; sheet names are never returned.
+  - `issues` are response-only. The UI shows "Sheet {sheetPosition}"; sheet names are never returned. `sheetPosition` and `row` are always present and are `null` for issues without a location (for example `TOTALS_MISMATCH`).
   - A dry run may record audit but commits no domain data or ownership claims.
   - Maximum workbook size is 20 MiB. Same-file in-progress exclusion is global; provider-owned card/key serialization also protects overlapping statements with different hashes.
 - **Errors:** `401`; `413 FILE_TOO_LARGE`; `415 UNSUPPORTED_FILE_TYPE` (not an `.xlsx` workbook); `422 UNREADABLE_WORKBOOK` / `UNKNOWN_STATEMENT_FORMAT`, or invalid `identitySelections` (malformed JSON, unknown question, nickname too long); `404` inaccessible explicit card selection; `409 IMPORT_IN_PROGRESS` / `DATA_ALREADY_OWNED`. Cookie-only mutations also follow the shared CSRF policy.

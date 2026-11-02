@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from tests.fakes import RepositorySlots
 
 from bank_transactions.domain.enums import ImportStatus
 from bank_transactions.domain.errors import PersistenceError, UnknownFormatError
@@ -32,7 +33,7 @@ class InsertFailsRepository(TransactionRepository):
         raise PersistenceError("the database rejected the operation")
 
 
-class InsertFailsUnitOfWork(UnitOfWork):
+class InsertFailsUnitOfWork(RepositorySlots, UnitOfWork):
     """Delegates to a real unit of work, but inserting transactions fails."""
 
     def __init__(self, inner: UnitOfWork) -> None:

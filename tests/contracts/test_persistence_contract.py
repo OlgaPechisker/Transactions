@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
+from tests.fakes import RepositorySlots
 
 from bank_transactions.domain.enums import (
     Channel,
@@ -245,11 +246,28 @@ def test_unit_of_work_exposes_every_repository_plus_commit_and_rollback():
         "cards",
         "installment_plans",
         "transactions",
+        "users",
+        "sessions",
+        "login_throttle",
+        "claims",
+        "visible_cards",
+        "import_history",
+        "transaction_query",
+        "categories",
+        "overrides",
+        "mappings",
+        "rules",
+        "trips",
+        "tags",
+        "exclusions",
+        "analysis",
+        "currency_validation",
+        "review_counter",
     }
     assert UnitOfWorkFactory.__abstractmethods__ == {"create"}
 
 
-class RecordingUnitOfWork(UnitOfWork):
+class RecordingUnitOfWork(RepositorySlots, UnitOfWork):
     def __init__(self):
         self.events = []
 

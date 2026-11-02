@@ -24,6 +24,7 @@ from bank_transactions.domain.ids import (
     InstallmentPlanId,
     OwnerId,
     TransactionId,
+    UserId,
 )
 from bank_transactions.domain.keys import ComparisonKey, IssuerReferenceKey, OwnerMatchKey
 from bank_transactions.domain.money import Currency
@@ -81,6 +82,12 @@ def _require_aware(*moments: datetime) -> None:
 
 def _code(currency: Currency | None) -> str | None:
     return None if currency is None else currency.code
+
+
+def _require_unscoped(scope: object | None) -> None:
+    """U0 keeps the legacy CLI behaviour; the user-scoped SQL is added by U1."""
+    if scope is not None:
+        raise NotImplementedError("user-scoped persistence is implemented by U1")
 
 
 def _owner_record(row: OwnerRow) -> OwnerRecord:
@@ -170,17 +177,22 @@ class SqlOwnerRepository(OwnerRepository):
         self._session = session
 
     @translates_database_errors
-    def list_all(self) -> tuple[OwnerRecord, ...]:
+    def list_all(self, user_id: UserId | None = None) -> tuple[OwnerRecord, ...]:
+        _require_unscoped(user_id)
         rows = self._session.scalars(select(OwnerRow).order_by(OwnerRow.id))
         return tuple(_owner_record(row) for row in rows)
 
     @translates_database_errors
-    def get(self, owner_id: OwnerId) -> OwnerRecord | None:
+    def get(self, owner_id: OwnerId, user_id: UserId | None = None) -> OwnerRecord | None:
+        _require_unscoped(user_id)
         row = self._session.get(OwnerRow, owner_id)
         return None if row is None else _owner_record(row)
 
     @translates_database_errors
-    def find_by_match_key(self, match_key: OwnerMatchKey) -> OwnerRecord | None:
+    def find_by_match_key(
+        self, match_key: OwnerMatchKey, user_id: UserId | None = None
+    ) -> OwnerRecord | None:
+        _require_unscoped(user_id)
         row = self._session.scalars(
             select(OwnerRow).where(OwnerRow.match_key == match_key.value)
         ).one_or_none()
@@ -188,6 +200,7 @@ class SqlOwnerRepository(OwnerRepository):
 
     @translates_database_errors
     def create(self, owner: NewOwner) -> OwnerRecord:
+        _require_unscoped(owner.user_id)
         row = OwnerRow(display_name=owner.display_name, match_key=owner.match_key.value)
         self._session.add(row)
         self._session.flush()
@@ -199,19 +212,25 @@ class SqlAccountRepository(AccountRepository):
         self._session = session
 
     @translates_database_errors
-    def list_all(self) -> tuple[AccountRecord, ...]:
+    def list_all(self, user_id: UserId | None = None) -> tuple[AccountRecord, ...]:
+        _require_unscoped(user_id)
         rows = self._session.scalars(select(AccountRow).order_by(AccountRow.id))
         return tuple(_account_record(row) for row in rows)
 
     @translates_database_errors
-    def get(self, account_id: AccountId) -> AccountRecord | None:
+    def get(self, account_id: AccountId, user_id: UserId | None = None) -> AccountRecord | None:
+        _require_unscoped(user_id)
         row = self._session.get(AccountRow, account_id)
         return None if row is None else _account_record(row)
 
     @translates_database_errors
     def find_by_number(
-        self, bank_code: str | None, account_number_enc: IdentifierToken
+        self,
+        bank_code: str | None,
+        account_number_enc: IdentifierToken,
+        user_id: UserId | None = None,
     ) -> tuple[AccountRecord, ...]:
+        _require_unscoped(user_id)
         rows = self._session.scalars(
             select(AccountRow)
             .where(
@@ -241,12 +260,14 @@ class SqlCardRepository(CardRepository):
         self._session = session
 
     @translates_database_errors
-    def get(self, card_id: CardId) -> CardRecord | None:
+    def get(self, card_id: CardId, user_id: UserId | None = None) -> CardRecord | None:
+        _require_unscoped(user_id)
         row = self._session.get(CardRow, card_id)
         return None if row is None else _card_record(row)
 
     @translates_database_errors
     def find_candidates(self, lookup: CardLookup) -> tuple[CardRecord, ...]:
+        _require_unscoped(lookup.user_id)
         query = select(CardRow).where(
             CardRow.issuer_code == lookup.issuer_code,
             CardRow.last4_enc == bytes(lookup.last4_enc),
@@ -259,6 +280,7 @@ class SqlCardRepository(CardRepository):
 
     @translates_database_errors
     def create(self, card: NewCard) -> CardRecord:
+        _require_unscoped(card.claim_id)
         row = CardRow(
             owner_id=card.owner_id,
             account_id=card.account_id,

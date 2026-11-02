@@ -1,5 +1,6 @@
 """openpyxl adapter: reads a whole workbook eagerly into plain immutable views."""
 
+import io
 import warnings
 import zipfile
 import zlib
@@ -42,6 +43,9 @@ class ExcelWorkbookReader(WorkbookReader):
                 return self.read_stream(stream)
         except OSError:
             raise ParseError("the workbook file could not be opened") from None
+
+    def open_bytes(self, data: bytes) -> WorkbookView:
+        return self.read_stream(io.BytesIO(data))
 
     def read_stream(self, stream: BinaryIO) -> WorkbookView:
         book = self._load(stream)

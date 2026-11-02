@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from tests.fakes import RepositorySlots
 
 from bank_transactions.domain.enums import (
     IdentifierType,
@@ -389,7 +390,7 @@ def _require_aware(moment: datetime) -> None:
         raise PersistenceError("timestamps must be timezone-aware")
 
 
-class FakeUnitOfWork(UnitOfWork):
+class FakeUnitOfWork(RepositorySlots, UnitOfWork):
     """Works on a private copy of the committed state; commit writes back only what it touched,
     so an audit UoW and a domain UoW opened side by side never overwrite each other."""
 
@@ -459,6 +460,9 @@ class FakeReader(WorkbookReader):
             self.on_open()
         if self.failure is not None:
             raise self.failure
+        return WorkbookView(())
+
+    def open_bytes(self, data: bytes) -> WorkbookView:
         return WorkbookView(())
 
 
