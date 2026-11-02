@@ -43,12 +43,18 @@ Generate a key once:
 ```powershell
 bank-transactions detect statement.xlsx            # names the issuer; needs no DSN or key
 bank-transactions init-db                          # creates or upgrades the schema; needs the DSN only
+bank-transactions create-user --email dana@example.com --name "Dana Levi"  # prompts twice for the password (never an argument); needs the DSN and key
 bank-transactions import statement.xlsx --user dana@example.com            # prompts when an identity must be chosen
 bank-transactions import statement.xlsx --user dana@example.com --dry-run  # runs every step, then rolls the data back
 bank-transactions import statement.xlsx --user dana@example.com --non-interactive
 ```
 
 `python -m bank_transactions ...` is equivalent.
+
+`create-user` is the only way to add a user (the API has no registration endpoint). The password is
+read from a hidden prompt, asked twice, and is never accepted as an argument. The email is compared
+after trimming and case-folding; a duplicate or invalid email, or mismatched passwords, is a usage
+error (exit 2) and nothing is written.
 
 `import` requires `--user <email>`: the email (compared after trimming and case-folding) of an
 existing user, who becomes the owner of every card, owner and account the import creates. An unknown

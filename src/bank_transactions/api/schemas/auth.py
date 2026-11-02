@@ -5,6 +5,10 @@ from datetime import datetime
 from pydantic import Field
 
 from bank_transactions.api.schemas.common import ApiModel
+from bank_transactions.domain.enums import ReviewReason
+from bank_transactions.services.profile_service import MeView
+
+OWNER_ROLE = "OWNER"
 
 
 class SignInRequest(ApiModel):
@@ -35,3 +39,22 @@ class SessionResponse(ApiModel):
     token: str
     expires_at: datetime
     user: MeDto
+
+
+def to_me_dto(me: MeView) -> MeDto:
+    pending = me.pending_currency_validations
+    return MeDto(
+        id=me.public_id,
+        name=me.name,
+        email=me.email,
+        role=OWNER_ROLE,
+        csrf_token=me.csrf_token,
+        counters=MeCountersDto(
+            pending_currency_validations=pending,
+            needs_review_by_reason=(
+                [ReviewReasonCountDto(reason=ReviewReason.UNKNOWN_CURRENCY.value, count=pending)]
+                if pending
+                else []
+            ),
+        ),
+    )
