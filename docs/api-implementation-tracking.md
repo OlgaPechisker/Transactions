@@ -22,6 +22,17 @@ Source of truth: [api-design-phase-2.md](api-design-phase-2.md) (work breakdown 
 Ownership of files per unit is exactly the "Owns" column of §B.7.4. Frozen contract files (§B.7.2 rule 2) change
 only through a separate contract-change commit coordinated by the team leader.
 
+## Decisions during implementation
+- **CLI import user (user decision, cycle 2):** `bank-transactions import` gets a required `--user <email>` option
+  (user created with `create-user`); unknown email → usage error, exit 2. `detect` and `init-db` need no user.
+- **Scope transfer to U1 (cycle 2):** once `user_id`/`claim_id` are NOT NULL, the CLI pipeline must keep working.
+  U1 therefore also owns `persistence/providers/users.py` (plain user CRUD/lock; U4 consumes it),
+  `persistence/providers/claims.py` (`find`, `create_or_get`, `lock`; U5 consumes it), and the minimal
+  `user_id`/claim threading in `cli.py` (`import --user`), `services/import_service.py`, `services/identity_gate.py`,
+  the identity resolvers and the existing import tests. U5 later adds the API path, outcome order and placeholders on top.
+- Worktrees: `..\Transactions-wt\U<n>` on branch `unit/U<n>`; commands run with the main `.venv` python and
+  `PYTHONPATH=<worktree>\src;<worktree>`.
+
 ## Agents
 | Role | Model / effort | Scope |
 |---|---|---|
