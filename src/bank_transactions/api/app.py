@@ -31,6 +31,11 @@ def _uses_csrf(route: APIRoute) -> bool:
     return False
 
 
+def _is_framework_validation_response(response: dict[str, Any]) -> bool:
+    schema = response.get("content", {}).get("application/json", {}).get("schema", {})
+    return str(schema.get("$ref", "")).endswith("/HTTPValidationError")
+
+
 def _build_openapi(app: FastAPI) -> dict[str, Any]:
     schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
     paths: dict[str, Any] = schema["paths"]
@@ -45,7 +50,8 @@ def _build_openapi(app: FastAPI) -> dict[str, Any]:
         for method, operation in item.items():
             csrf = operations.get((path, method), False)
             responses: dict[str, Any] = operation["responses"]
-            responses.pop("422", None)
+            if _is_framework_validation_response(responses.get("422", {})):
+                del responses["422"]
             for status, response in problem_responses(401, *((403,) if csrf else ())).items():
                 responses.setdefault(str(status), response)
     components = schema.setdefault("components", {}).setdefault("schemas", {})

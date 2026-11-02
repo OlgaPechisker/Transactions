@@ -204,8 +204,10 @@ def transaction_filter_params(
             needs_review=needs_review,
             review_reasons=tuple(review_reason or ()),
         )
-    except ValueError as error:
-        raise InvalidQueryError(InvalidQueryError.INVALID_FILTER, str(error)) from error
+    except ValueError:
+        raise InvalidQueryError(
+            InvalidQueryError.INVALID_FILTER, "A filter value is invalid."
+        ) from None
 
 
 CurrentUser = Annotated[AuthContext, Depends(current_user)]

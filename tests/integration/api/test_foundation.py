@@ -29,6 +29,7 @@ from bank_transactions.api.dependencies import (
     single_sort_param,
     sort_param,
 )
+from bank_transactions.api.problems import problem_responses
 from bank_transactions.api.schemas.common import ApiModel, TransactionListItemDto
 from bank_transactions.api.schemas.mappers import (
     to_billing_summary,
@@ -178,6 +179,16 @@ def mutate(user: CsrfUser) -> dict[str, int]:
 
 @probe.post("/body")
 def body(payload: ProbeBody) -> dict[str, str]:
+    return {"name": payload.name}
+
+
+@probe.post("/sign-in", responses=problem_responses(400, 429))
+def sign_in_shaped(payload: ProbeBody) -> dict[str, str]:
+    return {"name": payload.name}
+
+
+@probe.post("/declared-422", responses=problem_responses(400, 422))
+def declares_422(payload: ProbeBody) -> dict[str, str]:
     return {"name": payload.name}
 
 
@@ -608,6 +619,13 @@ def test_a_month_filter_is_intersected_with_from_and_to(
     assert (body["from"], body["to"]) == (expected_from, expected_to)
 
 
+def test_a_filter_error_does_not_leak_internal_names(client: TestClient):
+    response = client.get("/api/v1/probe/filter?from=2024-05-01&to=2024-04-01")
+
+    assert "date_from" not in response.text
+    assert "date_to" not in response.text
+
+
 def test_a_month_outside_the_from_to_range_is_an_invalid_filter(client: TestClient):
     response = client.get("/api/v1/probe/filter?month=2024-02&from=2024-03-01&to=2024-03-31")
 
@@ -662,13 +680,34 @@ def test_a_validation_message_never_echoes_the_submitted_value(client: TestClien
     assert "hunter2" not in response.text
 
 
-def test_a_malformed_json_body_is_a_validation_problem(client: TestClient):
+def test_a_malformed_json_body_is_a_400_problem(client: TestClient):
     response = client.post(
         "/api/v1/probe/body", content="{oops", headers={"Content-Type": "application/json"}
     )
 
+    assert response.status_code == 400
+    body = problem(response)
+    assert body["code"] == "INVALID_REQUEST"
+    assert body["errors"][0]["field"] == "body"
+
+
+def test_an_operation_documenting_400_but_no_422_reports_body_errors_as_400(client: TestClient):
+    missing = client.post("/api/v1/probe/sign-in", json={"name": "ok"})
+    malformed = client.post(
+        "/api/v1/probe/sign-in", content="not json", headers={"Content-Type": "application/json"}
+    )
+
+    for response in (missing, malformed):
+        assert response.status_code == 400
+        assert problem(response)["code"] == "INVALID_REQUEST"
+    assert problem(missing)["errors"][0]["field"] == "lineItems"
+
+
+def test_an_operation_documenting_422_keeps_body_validation_at_422(client: TestClient):
+    response = client.post("/api/v1/probe/declared-422", json={"name": "ok"})
+
     assert response.status_code == 422
-    assert problem(response)["errors"][0]["field"] == "body"
+    assert problem(response)["code"] == "VALIDATION_ERROR"
 
 
 # --- shared DTO formatting ------------------------------------------------------------------------
@@ -803,6 +842,18 @@ def test_the_documented_problem_schema_is_shared_by_the_error_responses(composit
     assert response["content"][PROBLEM_JSON]["schema"] == {"$ref": "#/components/schemas/Problem"}
     assert "Problem" in document["components"]["schemas"]
     assert "HTTPValidationError" not in document["components"]["schemas"]
+
+
+def test_a_422_declared_by_a_route_stays_in_the_openapi_document(app: FastAPI):
+    operations = app.openapi()["paths"]
+
+    declared = operations["/api/v1/probe/declared-422"]["post"]["responses"]
+    assert set(declared) >= {"400", "401", "422"}
+    assert declared["422"]["content"][PROBLEM_JSON]["schema"] == {
+        "$ref": "#/components/schemas/Problem"
+    }
+    undeclared = operations["/api/v1/probe/body"]["post"]["responses"]
+    assert "422" not in undeclared
 
 
 # --- serving --------------------------------------------------------------------------------------

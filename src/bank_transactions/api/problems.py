@@ -175,12 +175,28 @@ def _field_error(error: Mapping[str, Any]) -> FieldError:
     return FieldError(field, code, message)
 
 
+def _declared_statuses(request: Request) -> set[int]:
+    responses = getattr(request.scope.get("route"), "responses", None) or {}
+    return {int(status) for status in responses if str(status).isdigit()}
+
+
 def _handle_request_validation(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, RequestValidationError)
     raw = exc.errors()
     sources = {str(error["loc"][0]) for error in raw}
     errors = tuple(_field_error(error) for error in raw)
     if sources <= {"body"}:
+        declared = _declared_statuses(request)
+        malformed = any(error["type"] == "json_invalid" for error in raw)
+        # An operation that documents 400 but no 422 reports every body problem as 400.
+        if malformed or (400 in declared and 422 not in declared):
+            return problem_response(
+                400,
+                INVALID_REQUEST,
+                "The request body is invalid.",
+                errors,
+                instance=request.url.path,
+            )
         return problem_response(
             422, ValidationFailedError.code, "Validation failed", errors, instance=request.url.path
         )

@@ -169,6 +169,15 @@ def _fx(record: TransactionViewRecord) -> FxDto | None:
 
 
 def _installment_plan(record: TransactionViewRecord) -> InstallmentPlanDto | None:
+    """The plan summary of an INSTALLMENTS row; None for other types or without number/total.
+
+    - number, total: the row's installment number and total.
+    - perPayment: round_amount(billing_amount), in the billing currency (sign as stored).
+    - planTotal: plan_total_amount when stored, in plan_currency; otherwise
+      perPayment × total, in the billing currency.
+    - remainingPayments: max(total − number, 0).
+    - remainingAmount: perPayment × remainingPayments, in the billing currency.
+    """
     number, total = record.installment_number, record.installment_total
     if record.transaction_type is not TransactionType.INSTALLMENTS or not number or not total:
         return None
