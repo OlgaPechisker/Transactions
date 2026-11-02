@@ -18,3 +18,6 @@ htmlcov/
 
 # Office lock files
 ~$*
+
+# Local statement samples (may contain personal data)
+examples/
