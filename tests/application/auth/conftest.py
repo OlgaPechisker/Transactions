@@ -170,6 +170,13 @@ class AuthWorld:
     authenticator: SessionAuthenticator
     profile: ProfileService
     cards: CardService
+    uow_factory: InMemoryUnitOfWorkFactory
+
+    def open_units(self) -> int:
+        """Units of work created and neither committed nor rolled back yet (a held connection)."""
+        return sum(
+            not (uow.committed or uow.rolled_back) for uow, _isolation in self.uow_factory.created
+        )
 
     def add_user(
         self, email: str = "dana@example.com", name: str = "Dana Levi", password: str = "s3cret"
@@ -203,6 +210,7 @@ def build_world(hasher: PasswordHasher | None = None) -> AuthWorld:
         authenticator=SessionAuthenticator(uow_factory, tokens, clock),
         profile=ProfileService(uow_factory, counter),
         cards=CardService(uow_factory, presenter),
+        uow_factory=uow_factory,
     )
 
 

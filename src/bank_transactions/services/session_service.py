@@ -128,9 +128,12 @@ class SessionService:
         digest = self._tokens.digest(token)
         now = self._clock.now()
         expires_at = now + SESSION_LIFETIME
+        new_hash = (
+            self._hasher.hash(password) if self._hasher.needs_rehash(user.password_hash) else None
+        )
         with self._uow_factory.create() as uow:
-            if self._hasher.needs_rehash(user.password_hash):
-                uow.users.update_password_hash(user.user_id, self._hasher.hash(password))
+            if new_hash is not None:
+                uow.users.update_password_hash(user.user_id, new_hash)
             session = uow.sessions.create(NewSession(user.user_id, digest, now, expires_at))
             uow.commit()
         context = AuthContext(

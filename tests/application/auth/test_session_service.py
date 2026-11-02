@@ -38,6 +38,18 @@ class OutdatedHashes(FakeHasher):
         return not password_hash.startswith(self.PREFIX + "upgraded:")
 
 
+class HashProbe(OutdatedHashes):
+    """Notes how many units of work are open each time a new hash is computed."""
+
+    def __init__(self) -> None:
+        self.open_units = lambda: 0
+        self.open_during_hash: list[int] = []
+
+    def hash(self, password: str) -> str:
+        self.open_during_hash.append(self.open_units())
+        return super().hash(password)
+
+
 def fail_sign_in(world, email: str, ip: str = CLIENT_IP, password: str = "wrong") -> None:
     with pytest.raises(AuthenticationError) as caught:
         world.service.sign_in(email, password, ip)
@@ -118,6 +130,20 @@ def test_the_stored_hash_is_upgraded_when_it_is_outdated(make_world):
 
     assert world.users.get(user.user_id).password_hash == "hashed:upgraded:s3cret"
     assert world.service.sign_in("dana@example.com", "s3cret", CLIENT_IP).token
+
+
+def test_no_connection_is_held_while_the_upgraded_hash_is_computed(make_world):
+    hasher = HashProbe()
+    world = make_world(hasher)
+    hasher.open_units = world.open_units
+    user = world.add_user()
+    world.users.update_password_hash(user.user_id, "hashed:s3cret")
+    hasher.open_during_hash.clear()
+
+    world.service.sign_in("dana@example.com", "s3cret", CLIENT_IP)
+
+    assert hasher.open_during_hash == [0]
+    assert world.users.get(user.user_id).password_hash == "hashed:upgraded:s3cret"
 
 
 def test_the_eleventh_attempt_from_one_address_is_rate_limited(world):
