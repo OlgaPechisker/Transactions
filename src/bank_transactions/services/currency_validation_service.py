@@ -142,8 +142,10 @@ class CurrencyValidationService:
                 targets = tuple(locked[public_id] for public_id in requested)
                 self._require_pending(repository, user_id, [ref.transaction_id for ref in targets])
             else:
-                assert command.filter is not None
-                locked_rows = query.lock_pending_matching(user_id, command.filter)
+                selection = command.filter
+                if selection is None:
+                    raise ValueError("a batch command needs transaction ids or a filter")
+                locked_rows = query.lock_pending_matching(user_id, selection)
                 # The rows were matched before their locks were granted; keep those still pending.
                 pending = repository.pending_among(user_id, [r.transaction_id for r in locked_rows])
                 targets = tuple(ref for ref in locked_rows if ref.transaction_id in pending)

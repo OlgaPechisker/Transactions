@@ -41,7 +41,7 @@ from bank_transactions.services.currency_validation_service import (
     BatchCommand,
     ValidationItemsQuery,
 )
-from bank_transactions.services.read_models import ValidationItemRecord
+from bank_transactions.services.read_models import CountryOptionRecord, ValidationItemRecord
 
 router = APIRouter(tags=["CurrencyValidation"])
 
@@ -55,9 +55,12 @@ def _implied_rate(billing: Decimal, original: Decimal | None) -> str | None:
 
 def _to_item(item: ValidationItemRecord) -> CurrencyValidationItemDto:
     record = item.transaction
+    if record.original_amount is None:
+        raise ValueError(f"transaction {record.public_id} has no original amount")
     validation = None
     if item.validated_currency is not None:
-        assert item.batch_public_id is not None and item.validated_at is not None
+        if item.batch_public_id is None or item.validated_at is None:
+            raise ValueError(f"validation of transaction {record.public_id} has no batch")
         validation = ValidationDto(
             currency=item.validated_currency,
             batch_id=item.batch_public_id,
@@ -68,11 +71,17 @@ def _to_item(item: ValidationItemRecord) -> CurrencyValidationItemDto:
         transaction_date=record.transaction_date.isoformat(),
         merchant=record.merchant,
         country=record.country,
-        original_amount=format_amount(record.original_amount or Decimal(0)),
+        original_amount=format_amount(record.original_amount),
         billing=to_money(record.billing_amount, record.billing_currency),
         implied_rate=_implied_rate(record.billing_amount, record.original_amount),
         validation=validation,
     )
+
+
+def _to_country(option: CountryOptionRecord) -> CountryOptionDto:
+    if option.code is None:
+        raise ValueError("a pending-validation country option has no code")
+    return CountryOptionDto(code=option.code, count=option.count)
 
 
 @router.get("/currency-validation-queue", operation_id="getCurrencyValidationQueue")
@@ -85,11 +94,7 @@ def get_currency_validation_queue(
         validated=overview.validated,
         pending=overview.pending,
         progress_percent=format(overview.progress_percent, "f"),
-        countries=[
-            CountryOptionDto(code=option.code, count=option.count)
-            for option in overview.countries
-            if option.code is not None
-        ],
+        countries=[_to_country(option) for option in overview.countries],
         currency_options=[
             CurrencyOptionDto(code=entry.code, name=entry.name) for entry in overview.currencies
         ],

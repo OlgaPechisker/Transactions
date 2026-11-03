@@ -332,6 +332,24 @@ def test_one_unknown_id_fails_the_whole_batch_with_404(shop: PgSession):
     assert pending_counter(shop) == 3
 
 
+def test_a_visible_transaction_that_is_not_pending_fails_the_batch_with_422(shop: PgSession):
+    pending_ids = ids_by_merchant(shop)
+    listing = shop.client.get("/api/v1/transactions", params={"pageSize": 100}).json()["items"]
+    (domestic_id,) = [
+        item["id"]
+        for item in listing
+        if item["id"] not in pending_ids.values() and item["original"] is None
+    ]
+
+    response = create_batch(
+        shop, {"currency": "EUR", "transactionIds": [pending_ids["Rome Cafe"], domestic_id]}
+    )
+
+    assert response.status_code == 422
+    assert "NOT_PENDING" in [error["code"] for error in response.json()["errors"]]
+    assert pending_counter(shop) == 3
+
+
 def test_a_user_cannot_validate_undo_or_move_back_the_rows_of_another_user(
     shop: PgSession, pg_sign_in, seed_claimed_card, seed_transaction
 ):
