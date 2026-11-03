@@ -3,12 +3,11 @@
 from fastapi import APIRouter
 
 from bank_transactions.api.dependencies import Composition, CsrfUser, TransactionIdPath
+from bank_transactions.api.group_labels import card_presenter
 from bank_transactions.api.problems import problem_responses
 from bank_transactions.api.schemas.common import TransactionDetailDto
 from bank_transactions.api.schemas.mappers import to_transaction_detail
 from bank_transactions.api.schemas.transactions import UpdateTransactionRequest
-from bank_transactions.services.card_service import CardView
-from bank_transactions.services.read_models import VisibleCardRecord
 
 router = APIRouter(tags=["Transactions"])
 
@@ -25,8 +24,4 @@ def update_transaction(
     comp: Composition,
 ) -> TransactionDetailDto:
     record = comp.categories.set_override(user, transaction_id, body.custom_category)
-
-    def present_card(card: VisibleCardRecord) -> CardView:
-        return comp.card_presenter.present(card, user.user_display_name)
-
-    return to_transaction_detail(record, present_card)
+    return to_transaction_detail(record, card_presenter(comp, user.user_display_name))

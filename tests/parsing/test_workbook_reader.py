@@ -2,6 +2,7 @@ import io
 import re
 import warnings
 import zipfile
+import zlib
 from datetime import datetime
 from pathlib import Path
 
@@ -216,3 +217,62 @@ def test_open_bytes_rejects_empty_and_truncated_content():
     for data in (b"", good[: len(good) // 2]):
         with pytest.raises(ParseError):
             ExcelWorkbookReader().open_bytes(data)
+
+
+SHEET_PART = "xl/worksheets/sheet1.xml"
+DEFLATE, UNSUPPORTED_METHOD = 8, 99
+
+
+def _workbook_with_sheet_stream(damage, method):
+    """A workbook whose sheet part is stored as `damage(sheet xml)` but declared as compressed
+    with `method` in the central directory."""
+    good = workbook_stream(lambda book: book.active.append(["secret-1234"])).getvalue()
+    rebuilt = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(good)) as source, zipfile.ZipFile(rebuilt, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == SHEET_PART:
+                target.writestr(SHEET_PART, damage(data), compress_type=zipfile.ZIP_STORED)
+            else:
+                target.writestr(item, data)
+    archive = bytearray(rebuilt.getvalue())
+    central_record = archive.rindex(SHEET_PART.encode()) - 46
+    archive[central_record + 10 : central_record + 12] = method.to_bytes(2, "little")
+    return bytes(archive)
+
+
+def _truncated_deflate(data):
+    compressor = zlib.compressobj(wbits=-15)
+    return compressor.compress(data) + compressor.flush(zlib.Z_SYNC_FLUSH)
+
+
+@pytest.mark.parametrize(
+    ("damage", "method"),
+    [
+        pytest.param(lambda data: b"\xff" * 16, DEFLATE, id="garbage deflate stream"),
+        pytest.param(_truncated_deflate, DEFLATE, id="deflate stream without its end"),
+        pytest.param(lambda data: data, UNSUPPORTED_METHOD, id="unsupported compression"),
+    ],
+)
+def test_a_part_the_archive_cannot_decompress_is_unreadable_not_a_crash(damage, method):
+    damaged = _workbook_with_sheet_stream(damage, method)
+
+    with pytest.raises(ParseError) as raised:
+        ExcelWorkbookReader().open_bytes(damaged)
+
+    assert "1234" not in str(raised.value)
+
+
+def test_a_part_flagged_as_encrypted_is_unreadable_not_a_crash():
+    good = workbook_stream(lambda book: book.active.append(["secret-1234"])).getvalue()
+    with zipfile.ZipFile(io.BytesIO(good)) as archive:
+        local_header = archive.getinfo(SHEET_PART).header_offset
+    flagged = bytearray(good)
+    central_record = flagged.rindex(SHEET_PART.encode()) - 46
+    for flags_at in (local_header + 6, central_record + 8):
+        flagged[flags_at] |= 0x1
+
+    with pytest.raises(ParseError) as raised:
+        ExcelWorkbookReader().open_bytes(bytes(flagged))
+
+    assert "1234" not in str(raised.value)

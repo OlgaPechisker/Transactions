@@ -48,7 +48,15 @@ from bank_transactions.persistence.visibility import (
     visible_unknown_currency,
 )
 
-__all__ = ["SqlTransactionQueryRepository"]
+__all__ = [
+    "SqlTransactionQueryRepository",
+    "contains_any",
+    "filter_conditions",
+    "group_key",
+    "pending_filter_conditions",
+    "summarize",
+    "summary_statement",
+]
 
 # A sort field "group:<dimension>" orders by that dimension's group key, exactly like the groups
 # themselves are ordered. The service puts it first when the list is grouped. The service keeps
@@ -73,7 +81,7 @@ _PLAIN_SORT_COLUMNS = {
 }
 
 
-def _contains_any(column: ColumnElement[Any], terms: Sequence[str]) -> ColumnElement[bool]:
+def contains_any(column: ColumnElement[Any], terms: Sequence[str]) -> ColumnElement[bool]:
     def pattern(term: str) -> str:
         return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
@@ -93,7 +101,22 @@ def _in_or_none(
     return or_(*clauses)
 
 
-def _conditions(v: Subquery, filter: TransactionFilter) -> list[ColumnElement[bool]]:
+def pending_filter_conditions(filter: PendingValidationFilter) -> list[ColumnElement[bool]]:
+    """The narrowing of the validation queue and of a filter batch, on the transaction table.
+    One definition, so the pending list and `lock_pending_matching` cannot drift apart."""
+    where: list[ColumnElement[bool]] = []
+    if filter.countries:
+        where.append(_t.c.merchant_country.in_(filter.countries))
+    if filter.date_from is not None:
+        where.append(_t.c.transaction_date >= filter.date_from)
+    if filter.date_to is not None:
+        where.append(_t.c.transaction_date <= filter.date_to)
+    if filter.merchants:
+        where.append(contains_any(_t.c.merchant_name_raw, filter.merchants))
+    return where
+
+
+def filter_conditions(v: Subquery, filter: TransactionFilter) -> list[ColumnElement[bool]]:
     c: Any = v.c
     where: list[ColumnElement[bool]] = []
     if filter.date_from is not None:
@@ -125,7 +148,7 @@ def _conditions(v: Subquery, filter: TransactionFilter) -> list[ColumnElement[bo
     if filter.max_amount is not None:
         where.append(c.billing_amount <= filter.max_amount)
     if filter.merchants:
-        where.append(_contains_any(c.merchant, filter.merchants))
+        where.append(contains_any(c.merchant, filter.merchants))
     if filter.types:
         where.append(c.transaction_type.in_(filter.types))
     if filter.countries:
@@ -142,7 +165,7 @@ def _conditions(v: Subquery, filter: TransactionFilter) -> list[ColumnElement[bo
     return where
 
 
-def _group_key(c: Any, dimension: Dimension) -> ColumnElement[Any]:
+def group_key(c: Any, dimension: Dimension) -> ColumnElement[Any]:
     """The key of the row's group, NULL when the row has no value in that dimension. A key can
     be sent back as the matching filter value."""
     match dimension:
@@ -177,7 +200,7 @@ def _group_key(c: Any, dimension: Dimension) -> ColumnElement[Any]:
 
 def _sort_expression(c: Any, field: str) -> ColumnElement[Any]:
     if field.startswith(GROUP_SORT_PREFIX):
-        return _group_key(c, Dimension(field.removeprefix(GROUP_SORT_PREFIX)))
+        return group_key(c, Dimension(field.removeprefix(GROUP_SORT_PREFIX)))
     if field in _PLAIN_SORT_COLUMNS:
         return getattr(c, _PLAIN_SORT_COLUMNS[field])  # type: ignore[no-any-return]
     match field:
@@ -210,7 +233,7 @@ def _order_by(c: Any, sort: SortSpec) -> list[ColumnElement[Any]]:
     return ordering
 
 
-def _summary_statement(filtered: Subquery, keyed: bool) -> Select[Any]:
+def summary_statement(filtered: Subquery, keyed: bool) -> Select[Any]:
     c: Any = filtered.c
     columns = [c.group_key, c.billing_currency] if keyed else [c.billing_currency]
     return (
@@ -225,8 +248,9 @@ def _summary_statement(filtered: Subquery, keyed: bool) -> Select[Any]:
     )
 
 
-def _summaries(rows: Sequence[Any], keyed: bool) -> dict[str | None, BillingSummaryRecord]:
-    """One summary per group key, in the order of the rows (a single None key when not keyed)."""
+def summarize(rows: Sequence[Any], keyed: bool) -> dict[str | None, BillingSummaryRecord]:
+    """One summary per group key, in the order of the rows (a single None key when not keyed).
+    The rows are the result of `summary_statement`."""
     totals: dict[str | None, list[BillingTotalRecord]] = defaultdict(list)
     counts: dict[str | None, int] = defaultdict(int)
     unknown_billing: dict[str | None, int] = defaultdict(int)
@@ -263,7 +287,7 @@ class SqlTransactionQueryRepository(TransactionQueryRepository):
         self, user_id: UserId, filter: TransactionFilter, sort: SortSpec, page: PageRequest
     ) -> Page[TransactionViewRecord]:
         v = self._view(user_id)
-        where = _conditions(v, filter)
+        where = filter_conditions(v, filter)
         total = self._session.execute(
             select(func.count()).select_from(v).where(*where)
         ).scalar_one()
@@ -279,9 +303,9 @@ class SqlTransactionQueryRepository(TransactionQueryRepository):
     @translates_database_errors
     def summary(self, user_id: UserId, filter: TransactionFilter) -> BillingSummaryRecord:
         v = self._view(user_id)
-        filtered = select(v).where(*_conditions(v, filter)).subquery("filtered")
-        rows = self._session.execute(_summary_statement(filtered, keyed=False)).all()
-        return _summaries(rows, keyed=False).get(None, BillingSummaryRecord(0, 0))
+        filtered = select(v).where(*filter_conditions(v, filter)).subquery("filtered")
+        rows = self._session.execute(summary_statement(filtered, keyed=False)).all()
+        return summarize(rows, keyed=False).get(None, BillingSummaryRecord(0, 0))
 
     @translates_database_errors
     def groups(
@@ -289,12 +313,12 @@ class SqlTransactionQueryRepository(TransactionQueryRepository):
     ) -> tuple[GroupRecord, ...]:
         v = self._view(user_id)
         filtered = (
-            select(v, _group_key(v.c, dimension).label("group_key"))
-            .where(*_conditions(v, filter))
+            select(v, group_key(v.c, dimension).label("group_key"))
+            .where(*filter_conditions(v, filter))
             .subquery("filtered")
         )
-        rows = self._session.execute(_summary_statement(filtered, keyed=True)).all()
-        return tuple(GroupRecord(key, summary) for key, summary in _summaries(rows, True).items())
+        rows = self._session.execute(summary_statement(filtered, keyed=True)).all()
+        return tuple(GroupRecord(key, summary) for key, summary in summarize(rows, True).items())
 
     @translates_database_errors
     def get(self, user_id: UserId, public_id: PublicId) -> TransactionViewRecord | None:
@@ -331,16 +355,8 @@ class SqlTransactionQueryRepository(TransactionQueryRepository):
         statement = (
             visible_transactions(user_id)
             .with_only_columns(_t.c.id, _t.c.public_id)
-            .where(visible_unknown_currency())
+            .where(visible_unknown_currency(), *pending_filter_conditions(filter))
         )
-        if filter.countries:
-            statement = statement.where(_t.c.merchant_country.in_(filter.countries))
-        if filter.date_from is not None:
-            statement = statement.where(_t.c.transaction_date >= filter.date_from)
-        if filter.date_to is not None:
-            statement = statement.where(_t.c.transaction_date <= filter.date_to)
-        if filter.merchants:
-            statement = statement.where(_contains_any(_t.c.merchant_name_raw, filter.merchants))
         return self._locked(statement)
 
     def _locked(self, statement: Select[Any]) -> tuple[TransactionRef, ...]:

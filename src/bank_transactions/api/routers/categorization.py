@@ -22,7 +22,6 @@ from bank_transactions.services.read_models import MappingRecord, RuleRecord
 
 router = APIRouter(tags=["Categorization"])
 
-# `:path` lets bank categories that contain a slash through.
 BankCategoryPath = Annotated[str, Path(alias="bankCategory")]
 
 
@@ -77,6 +76,7 @@ def create_custom_category(
 
 
 @router.put(
+    # `:path` lets bank categories that contain a slash through.
     "/category-mappings/{bankCategory:path}",
     operation_id="putCategoryMapping",
     responses=problem_responses(404, 422),
@@ -88,6 +88,7 @@ def put_category_mapping(
 
 
 @router.delete(
+    # `:path` lets bank categories that contain a slash through.
     "/category-mappings/{bankCategory:path}",
     operation_id="deleteCategoryMapping",
     status_code=204,

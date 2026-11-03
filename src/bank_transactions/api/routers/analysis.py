@@ -1,6 +1,5 @@
 """Spending analysis."""
 
-from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -14,6 +13,7 @@ from bank_transactions.api.dependencies import (
     CurrentUser,
     include_param,
 )
+from bank_transactions.api.group_labels import LabelOf, card_presenter, group_labeler
 from bank_transactions.api.problems import problem_responses
 from bank_transactions.api.schemas.analysis import (
     AnalysisGroupDto,
@@ -36,7 +36,6 @@ from bank_transactions.domain.enums import TransactionType
 from bank_transactions.domain.errors import InvalidQueryError
 from bank_transactions.domain.ids import PublicId
 from bank_transactions.domain.queries import (
-    UNKNOWN,
     AnalysisInclude,
     AnalysisQuery,
     Bucket,
@@ -51,28 +50,10 @@ from bank_transactions.services.analysis_service import (
     SpendingAnalysisView,
     TimeSeriesView,
 )
-from bank_transactions.services.card_service import CardView
-from bank_transactions.services.composition import ApiComposition
-from bank_transactions.services.read_models import VisibleCardRecord
 
 router = APIRouter(tags=["Analysis"])
 
-LabelOf = Callable[[Dimension, str | None], str]
-
 _DECIMAL_PATTERN = r"^-?\d+(\.\d+)?$"
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-# Labels of the group without a value; the same as the transaction list groups.
-_MISSING_LABELS = {
-    Dimension.CATEGORY: "Uncategorized",
-    Dimension.CUSTOM_CATEGORY: "No custom category",
-    Dimension.COUNTRY: "Unknown country",
-    Dimension.CARD: "No card",
-    Dimension.CURRENCY: "No original currency",
-    Dimension.TRIP: "No trip",
-    Dimension.MERCHANT: "Unknown merchant",
-    Dimension.TYPE: "Unknown type",
-}
 
 
 def analysis_filter_params(
@@ -114,39 +95,10 @@ def analysis_filter_params(
         ) from None
 
 
-def _label_of(
-    dimension: Dimension,
-    key: str,
-    present_card: CardPresent,
-    cards: dict[str, VisibleCardRecord],
-    trips: dict[str, str],
-) -> str:
-    match dimension:
-        case Dimension.CURRENCY if key == UNKNOWN:
-            return "Unknown currency"
-        case Dimension.MONTH:
-            year, month = key.split("-")
-            return f"{_MONTHS[int(month) - 1]} {year}"
-        case Dimension.WEEK:
-            return f"Week of {key}"
-        case Dimension.CARD:
-            return present_card(cards[key]).label if key in cards else key
-        case Dimension.TRIP:
-            return trips.get(key, key)
-        case _:
-            return key
-
-
 def _label_function(view: SpendingAnalysisView, present_card: CardPresent) -> LabelOf:
-    cards: dict[str, VisibleCardRecord] = {card.public_id: card for card in view.cards}
-    trips: dict[str, str] = {trip.public_id: trip.name for trip in view.trips}
-
-    def label_of(dimension: Dimension, key: str | None) -> str:
-        if key is None:
-            return _MISSING_LABELS[dimension]
-        return _label_of(dimension, key, present_card, cards, trips)
-
-    return label_of
+    return group_labeler(
+        present_card, view.cards, ((trip.public_id, trip.name) for trip in view.trips)
+    )
 
 
 def _range(days: DateRange) -> AnalysisRangeDto:
@@ -294,11 +246,4 @@ def get_spending_analysis(
     except ValueError as error:
         raise InvalidQueryError(InvalidQueryError.INVALID_FILTER, str(error)) from error
     view = comp.analysis.analyze(user, query)
-    return _to_dto(view, _card_presenter(comp, user.user_display_name))
-
-
-def _card_presenter(comp: ApiComposition, user_name: str) -> CardPresent:
-    def present(record: VisibleCardRecord) -> CardView:
-        return comp.card_presenter.present(record, user_name)
-
-    return present
+    return _to_dto(view, card_presenter(comp, user.user_display_name))

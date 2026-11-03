@@ -18,7 +18,7 @@ from bank_transactions.domain.ids import UserId
 from bank_transactions.domain.queries import AnalysisQuery, Bucket, Dimension, TransactionFilter
 from bank_transactions.persistence.db import translates_database_errors
 from bank_transactions.persistence.interfaces import AnalysisRepository
-from bank_transactions.persistence.providers.transaction_query import _conditions, _group_key
+from bank_transactions.persistence.providers.transaction_query import filter_conditions, group_key
 from bank_transactions.persistence.records import (
     AnalysisGroupRecord,
     MatrixCellRecord,
@@ -63,7 +63,7 @@ class SqlAnalysisRepository(AnalysisRepository):
                 view.c.billing_amount,
                 *(expression(view.c).label(label) for label, expression in keys.items()),
             )
-            .where(*_conditions(view, _effective_filter(query)))
+            .where(*filter_conditions(view, _effective_filter(query)))
             .subquery("filtered")
         )
         columns = [filtered.c[label] for label in keys]
@@ -82,7 +82,7 @@ class SqlAnalysisRepository(AnalysisRepository):
     def groups(
         self, user_id: UserId, query: AnalysisQuery, dimension: Dimension
     ) -> tuple[AnalysisGroupRecord, ...]:
-        rows = self._aggregate(user_id, query, {"key": lambda c: _group_key(c, dimension)})
+        rows = self._aggregate(user_id, query, {"key": lambda c: group_key(c, dimension)})
         return tuple(AnalysisGroupRecord(row.key, row.rows, Decimal(row.net)) for row in rows)
 
     @translates_database_errors
@@ -95,7 +95,7 @@ class SqlAnalysisRepository(AnalysisRepository):
     ) -> tuple[SeriesPointRecord, ...]:
         keys: dict[str, KeyExpression] = {"bucket_start": _bucket_start(bucket)}
         if series_dimension is not None:
-            keys["series_key"] = lambda c: _group_key(c, series_dimension)
+            keys["series_key"] = lambda c: group_key(c, series_dimension)
         rows = self._aggregate(user_id, query, keys)
         return tuple(
             SeriesPointRecord(
@@ -115,7 +115,7 @@ class SqlAnalysisRepository(AnalysisRepository):
             user_id,
             query,
             {
-                "row_key": lambda c: _group_key(c, row_dimension),
+                "row_key": lambda c: group_key(c, row_dimension),
                 "bucket_start": _bucket_start(bucket),
             },
         )
