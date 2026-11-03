@@ -1,13 +1,12 @@
 """GET /transactions, /transactions/{id} and /filter-options against the real schema, in both auth
 modes. User A owns the data; user B is a stranger who must never see any of it."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.contracts.openapi_conformance import assert_operations_conform
 from tests.integration.api.conftest import PgSession, PgSignIn
@@ -15,13 +14,10 @@ from tests.storage.seeds import SeededCard, create_claimed_card, create_transact
 
 from bank_transactions.api.app import create_app
 from bank_transactions.domain.enums import ReviewReason
-from bank_transactions.domain.ids import PublicId, TripId
 from bank_transactions.domain.money import USD
 from bank_transactions.persistence.commands import NewForeignDetail
 from bank_transactions.persistence.interfaces import UnitOfWorkFactory
-from bank_transactions.persistence.records import TripRecord
 from bank_transactions.services.composition import ApiComposition
-from bank_transactions.services.transaction_service import TransactionService
 
 LIST = "/api/v1/transactions"
 FOREIGN = {
@@ -35,50 +31,14 @@ UNKNOWN_FOREIGN = {
     "aggregate_review_reasons": {ReviewReason.UNKNOWN_CURRENCY},
     "aggregate_foreign_detail": NewForeignDetail(Decimal("0.50"), None, Decimal("3.65")),
 }
-ROME = TripRecord(
-    TripId(1), PublicId("trp_rome"), "Rome", "EUR", date(2026, 7, 1), date(2026, 7, 9)
-)
+TRIPS = "/api/v1/trips"
 
 
-class WithTrips:
-    # TEMPORARY until U8: TripRepository.list is still a stub, so the trips come from a stand-in.
-    # Everything else, including the visible cards, is the real unit of work.
-    """A unit of work whose `trips` is a stand-in."""
-
-    def __init__(self, uow: Any) -> None:
-        self._uow = uow
-
-    def __enter__(self) -> "WithTrips":
-        self._uow.__enter__()
-        return self
-
-    def __exit__(self, *exc: Any) -> Any:
-        return self._uow.__exit__(*exc)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._uow, name)
-
-    @property
-    def trips(self) -> Any:
-        class Trips:
-            def list(self, user_id: int) -> tuple[TripRecord, ...]:
-                return (ROME,)
-
-        return Trips()
-
-
-class WithTripsFactory:
-    def __init__(self, factory: UnitOfWorkFactory) -> None:
-        self._factory = factory
-
-    def create(self, *args: Any, **kwargs: Any) -> WithTrips:
-        return WithTrips(self._factory.create(*args, **kwargs))
-
-
-@pytest.fixture
-def pg_app(pg_composition: ApiComposition, factory: UnitOfWorkFactory) -> FastAPI:
-    transactions = TransactionService(WithTripsFactory(factory))  # type: ignore[arg-type]
-    return create_app(replace(pg_composition, transactions=transactions))
+def create_trip(session: PgSession, name: str = "Rome", **fields: Any) -> dict[str, Any]:
+    body = {"name": name, "currency": "EUR", "startDate": "2026-07-01", "endDate": "2026-07-09"}
+    response = session.client.post(TRIPS, json=body | fields, headers=session.unsafe_headers)
+    assert response.status_code == 201, response.text
+    return response.json()
 
 
 @dataclass(frozen=True)
@@ -382,6 +342,8 @@ def test_an_unknown_transaction_is_a_404_problem(pg_signed_in, ledger):
 
 
 def test_the_filter_options_describe_the_data_of_the_user(pg_signed_in, ledger):
+    rome = create_trip(pg_signed_in)
+
     response = pg_signed_in.client.get("/api/v1/filter-options")
 
     body = response.json()
@@ -397,7 +359,7 @@ def test_the_filter_options_describe_the_data_of_the_user(pg_signed_in, ledger):
     assert body["billingCurrencies"] == [{"code": "ILS", "count": 4}]
     assert body["unknownBillingCurrencyCount"] == 0
     assert body["countries"] == [{"code": "IL", "count": 1}, {"code": "IT", "count": 1}]
-    assert body["trips"] == [{"id": "trp_rome", "name": "Rome"}]
+    assert body["trips"] == [{"id": rome["id"], "name": "Rome"}]
     assert body["dateRange"] == {"min": "2026-07-03", "max": "2026-08-12"}
 
 
@@ -414,7 +376,10 @@ def test_a_user_with_no_transactions_has_empty_options_and_an_empty_list(pg_sign
     assert listing["summary"]["count"] == 0
 
 
-def test_another_user_cannot_see_the_transactions_of_user_a(pg_sign_in: PgSignIn, ledger):
+def test_another_user_cannot_see_the_transactions_or_trips_of_user_a(
+    pg_sign_in: PgSignIn, pg_signed_in, ledger
+):
+    create_trip(pg_signed_in)
     stranger = pg_sign_in(email="user.b@example.com", display_name="User B")
 
     detail = stranger.client.get(f"{LIST}/{ledger.pharmacy}")
@@ -428,6 +393,7 @@ def test_another_user_cannot_see_the_transactions_of_user_a(pg_sign_in: PgSignIn
     assert options.json()["cards"] == []
     assert options.json()["currencies"] == []
     assert options.json()["unknownCurrencyCount"] == 0
+    assert options.json()["trips"] == []
 
 
 def test_filtering_by_the_card_of_another_user_matches_nothing(
