@@ -18,6 +18,7 @@ from tests.fakes import (
 from tests.fakes.auth import DEFAULT_TOKEN
 
 from bank_transactions.api.app import create_app
+from bank_transactions.api.dependencies import CurrentUser
 from bank_transactions.bootstrap import build_api_composition, build_parser_selector
 from bank_transactions.config import Settings
 from bank_transactions.identity.crypto import IdentifierCipher
@@ -106,8 +107,13 @@ def test_every_contract_operation_is_routed_with_its_operation_id_and_success_st
 
 
 def test_a_stubbed_route_answers_501_as_a_problem(app):
+    def stub(user: CurrentUser) -> None:
+        raise NotImplementedError
+
+    app.add_api_route("/api/v1/stub", stub, methods=["GET"])
+
     response = TestClient(app).get(
-        "/api/v1/categorization", headers={"Authorization": f"Bearer {DEFAULT_TOKEN}"}
+        "/api/v1/stub", headers={"Authorization": f"Bearer {DEFAULT_TOKEN}"}
     )
 
     assert response.status_code == 501
