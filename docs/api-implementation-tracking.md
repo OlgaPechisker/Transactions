@@ -69,6 +69,13 @@ only through a separate contract-change commit coordinated by the team leader.
 | U5 | sync | b8e91c5 | pytest 1655 passed | merge feature (U4) into unit/U5 |
 | U5 | 2 | 918e0f8 | ruff ✔, mypy ✔, pytest 1659 passed | fixes R1–R2. Re-review: APPROVED. Merged as 930af63 |
 | integration | – | 930af63 | feature branch: ruff ✔, mypy ✔, pytest 1823 passed / 9 known max_parser failures | cycle 3 complete |
+| U7 | 1 | 0c9687f | ruff ✔, mypy ✔, pytest 1952 passed (worktree, dev) / 639 targeted (leader) | dev-u7 (cycle 4). Review (tech-lead-c4): APPROVED, NITs R1–R6. Merged as 42bcb9e |
+| U8 | 1 | f2c8f14 | ruff ✔, mypy ✔, pytest 595 targeted passed, 1 skipped (bearer-mode CSRF) | dev-u8. Review: APPROVED, R1 deferred, NITs R2–R3. Merged as ea0904a |
+| U9 | 1 | f54f82d | ruff ✔, mypy ✔, pytest 2022 passed (dev) / 560 targeted (leader) | dev-u9. Review: CHANGES REQUIRED (R1–R2 MAJOR) |
+| U9 | 2 | 25781dc | ruff ✔, mypy ✔, pytest 201 U9 tests passed | fixes R1, R2, R5. Re-review: APPROVED. Merged as 917754c |
+| U10 | 1 | 5f2b7e5 | ruff ✔, mypy ✔, pytest 472 targeted passed | dev-u10. Review: APPROVED with NITs |
+| U10 | 2 | 8f76819 | ruff ✔, mypy ✔, pytest 104 U10 tests passed | fixes NITs R2–R5. Re-review: APPROVED. Merged as 9f5e6e9 |
+| integration | – | 9f5e6e9 | feature branch: ruff ✔, mypy ✔ (141 files), pytest 2391 passed / 1 skipped / 9 known max_parser failures | cycle 4 complete |
 
 ## Review findings
 | Unit | # | Severity | Finding | Decision | Resolved in |
@@ -110,7 +117,7 @@ only through a separate contract-change commit coordinated by the team leader.
 | U0 | R17 | – | `public_id` implemented | resolved | U1 iter 1 |
 | U4 | R1 | NIT | rehash computed inside UoW | valid → dev-u4 | U4 iter 2 |
 | U4 | R2 | NIT | nickname maxLength missing in generated OpenAPI | valid → dev-u4 | U4 iter 2 |
-| U4 | note | – | 501 probe in test_skeleton/test_foundation moved to `/api/v1/categorization`; U7 must move it again | open | U7 |
+| U4 | note | – | 501 probe in test_skeleton/test_foundation moved to `/api/v1/categorization`; U7 must move it again | resolved (test-local stub routes) | U7 iter 1 |
 | U6 | R1 | MINOR | domestic and pending rows shared the null currency group | valid → dev-u6 | U6 iter 2 (pending key UNKNOWN; domestic null "No original currency") |
 | U6 | R2 | MINOR | filter_options duplicated U4 card query | valid → dev-u6 | U6 iter 2 |
 | U6 | R3 | MINOR | test-only UoW proxy hid stubbed visible_cards/trips | valid → dev-u6 (cards); trips deferred | U8: delete the TEMPORARY trips stand-in in test_transactions.py, run on real composition, add two-user trips check to filter-options isolation test |
@@ -121,6 +128,22 @@ only through a separate contract-change commit coordinated by the team leader.
 | U5 | R3 | NIT | row ParseError surfaces after identity/claims (sequence diagram order) — §A "parse error after detection" means read_context failures | recorded | – |
 | U5 | note | – | `services/report.py` additive `rows_pending_currency` touched by U5 (allowed) | accepted | – |
 | U3 | R4 | MINOR | `ExcelWorkbookReader._load` may not catch zlib.error → 500 instead of 422 UNREADABLE_WORKBOOK | valid, deferred | U11 |
+| U7 | dec | – | DELETE mapping with no mapping → 404 (plan op 29 + OQ-4 override contract §10.3 "idempotent") | team-leader decision | – |
+| U7 | R1 | NIT | rule terms returned sorted by `term_norm`, not input order (no position column) | recorded | – |
+| U7 | R2 | NIT | `resultingCategories` counts every effective category incl. unmapped bank names; `stats.matched` counts visible txs containing any term, ignoring precedence | recorded | – |
+| U7 | R3 | NIT | name `maxLength` 60 checked on raw value (as openapi), before trim | recorded | – |
+| U7 | R4–R6 | NIT | duplicated card presenter; `resulting_categories` default; misplaced comment | optional cleanup | U11 |
+| U8 | R1 | MINOR | trips provider imports U6 private `_summaries`/`_summary_statement` | deferred | U11 |
+| U8 | R3 | NIT | `members.excluded` lists all exclusion rows of the trip, incl. txs now tagged to another trip (exclusion persists) | recorded | – |
+| U9 | R1 | MAJOR | unbounded `periods()` / monthly walk (≈800 MiB per request) | valid → dev-u9 | U9 iter 2 (1000-month cap always; lazy matrix columns) |
+| U9 | R2 | MAJOR | compare with period groupBy emitted out-of-range groups | valid → dev-u9 | U9 iter 2 (groups = current-range periods; `previous` paired by position; comparison-only keys never emitted) |
+| U9 | R3/R4 | MINOR | private `_conditions`/`_group_key` imports; label helpers duplicated from transactions router | deferred | U11 |
+| U9 | R5 | NIT | `assert` in router | valid → dev-u9 | U9 iter 2 |
+| U9 | R6 | NIT | `groupBy=trip` endpoint test missing (U8 not merged then) | deferred | U11 |
+| U9 | dec | – | weeks start Monday, today = UTC date; unknown query params ignored; all query errors → 400 INVALID_FILTER; error text says "month buckets" | recorded | – |
+| U10 | R1 | MINOR | private `_contains_any` import; `_narrowed` duplicates `lock_pending_matching` conditions | deferred | U11 (one public pending-filter helper) |
+| U10 | R2–R5 | NIT | NULL→"0.00" fallback, redundant filter, asserts, missing API NOT_PENDING test | valid → dev-u10 | U10 iter 2 |
+| U10 | R6 | NIT (docs) | plan op 23 body lists `currency`; frozen openapi/contract (`id, validatedCount, transactionIds, createdAt`) wins — plan erratum | recorded | – |
 
 Installment plan derivation (U2-R4, for U6): perPayment = round_amount(billing_amount) in billing currency; planTotal = plan_total_amount in plan_currency when stored, else perPayment × total in billing currency; remainingPayments = max(total − number, 0); remainingAmount = perPayment × remainingPayments in billing currency. An empty month ∩ from/to range returns 400 INVALID_FILTER (U0-R8 implemented by U2).
 
