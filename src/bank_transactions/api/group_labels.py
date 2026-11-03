@@ -8,15 +8,17 @@ from bank_transactions.services.card_service import CardView
 from bank_transactions.services.composition import ApiComposition
 from bank_transactions.services.read_models import VisibleCardRecord
 
-__all__ = ["LabelOf", "card_presenter", "group_labeler"]
+__all__ = ["UNCATEGORIZED_LABEL", "LabelOf", "card_presenter", "group_labeler"]
 
 LabelOf = Callable[[Dimension, str | None], str]
+
+UNCATEGORIZED_LABEL = "Uncategorized"
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 # Labels of the group without a value (§1.9; the other dimensions follow the OQ-2 defaults).
 _MISSING_LABELS = {
-    Dimension.CATEGORY: "Uncategorized",
+    Dimension.CATEGORY: UNCATEGORIZED_LABEL,
     Dimension.CUSTOM_CATEGORY: "No custom category",
     Dimension.COUNTRY: "Unknown country",
     Dimension.CARD: "No card",

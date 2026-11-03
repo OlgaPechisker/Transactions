@@ -66,6 +66,11 @@ def test_the_unknown_currency_of_the_monthly_export_is_validated_and_undone(
     session, headers = pg_signed_in, pg_signed_in.unsafe_headers
     import_example(session, MAX_MONTHLY)
     assert session.client.get(QUEUE).json()["countries"] == [{"code": "GB", "count": 1}]
+    pending = {
+        "pendingCurrencyValidations": 1,
+        "needsReviewByReason": [{"reason": "UNKNOWN_CURRENCY", "count": 1}],
+    }
+    assert counters(session) == pending
 
     batch = session.client.post(
         BATCHES, json={"currency": "GBP", "filter": {"country": ["GB"]}}, headers=headers
@@ -73,7 +78,7 @@ def test_the_unknown_currency_of_the_monthly_export_is_validated_and_undone(
     assert batch.status_code == 201
     created = batch.json()
     assert created["validatedCount"] == 1
-    assert pending_reasons(session) == 0
+    assert counters(session) == {"pendingCurrencyValidations": 0, "needsReviewByReason": []}
     validated = list_transactions(session, currency="GBP")
     assert [item["id"] for item in validated["items"]] == created["transactionIds"]
     assert validated["items"][0]["reviewReasons"] == []
@@ -81,7 +86,7 @@ def test_the_unknown_currency_of_the_monthly_export_is_validated_and_undone(
 
     undone = session.client.delete(f"{BATCHES}/{created['id']}", headers=headers)
     assert undone.status_code == 204
-    assert pending_reasons(session) == 1
+    assert counters(session) == pending
     assert list_transactions(session, currency="GBP")["summary"]["count"] == 0
     assert list_transactions(session, currency="UNKNOWN")["summary"]["count"] == 1
 

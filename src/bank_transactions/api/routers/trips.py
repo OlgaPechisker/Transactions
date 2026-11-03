@@ -12,6 +12,7 @@ from bank_transactions.api.dependencies import (
     TripIdPath,
     single_sort_param,
 )
+from bank_transactions.api.group_labels import UNCATEGORIZED_LABEL, card_presenter
 from bank_transactions.api.problems import problem_responses
 from bank_transactions.api.schemas.common import TransactionListItemDto
 from bank_transactions.api.schemas.mappers import to_billing_summary, to_transaction_list_item
@@ -37,7 +38,6 @@ from bank_transactions.services.trip_service import NewTripCommand, TripDetailVi
 router = APIRouter(tags=["Trips"])
 
 TRIP_SORT_FIELDS = ("startDate", "name")
-UNCATEGORIZED_LABEL = "Uncategorized"
 
 
 def _days(trip: TripRecord) -> int:
@@ -64,12 +64,8 @@ def _to_summary(record: TripSummaryRecord) -> TripSummaryDto:
 def _list_items(
     records: tuple[TransactionViewRecord, ...], comp: Composition, display_name: str
 ) -> list[TransactionListItemDto]:
-    return [
-        to_transaction_list_item(
-            record, lambda card: comp.card_presenter.present(card, display_name)
-        )
-        for record in records
-    ]
+    present_card = card_presenter(comp, display_name)
+    return [to_transaction_list_item(record, present_card) for record in records]
 
 
 def _detail_dto(view: TripDetailView, comp: Composition, display_name: str) -> TripDetailDto:

@@ -261,3 +261,18 @@ def test_a_part_the_archive_cannot_decompress_is_unreadable_not_a_crash(damage, 
         ExcelWorkbookReader().open_bytes(damaged)
 
     assert "1234" not in str(raised.value)
+
+
+def test_a_part_flagged_as_encrypted_is_unreadable_not_a_crash():
+    good = workbook_stream(lambda book: book.active.append(["secret-1234"])).getvalue()
+    with zipfile.ZipFile(io.BytesIO(good)) as archive:
+        local_header = archive.getinfo(SHEET_PART).header_offset
+    flagged = bytearray(good)
+    central_record = flagged.rindex(SHEET_PART.encode()) - 46
+    for flags_at in (local_header + 6, central_record + 8):
+        flagged[flags_at] |= 0x1
+
+    with pytest.raises(ParseError) as raised:
+        ExcelWorkbookReader().open_bytes(bytes(flagged))
+
+    assert "1234" not in str(raised.value)

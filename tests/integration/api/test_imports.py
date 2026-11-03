@@ -324,6 +324,27 @@ def test_a_workbook_with_a_corrupted_sheet_stream_is_unprocessable(
     assert scalar("SELECT count(*) FROM import_runs WHERE status = 'FAILED'") == 1
 
 
+def test_a_workbook_with_an_encrypted_sheet_part_is_unprocessable(
+    pg_signed_in: PgSession, isracard, scalar
+):
+    sheet = next(
+        name
+        for name in zipfile.ZipFile(io.BytesIO(isracard)).namelist()
+        if name.startswith("xl/worksheets/sheet")
+    )
+    local_header = zipfile.ZipFile(io.BytesIO(isracard)).getinfo(sheet).header_offset
+    flagged = bytearray(isracard)
+    central_record = flagged.rindex(sheet.encode()) - 46
+    for flags_at in (local_header + 6, central_record + 8):
+        flagged[flags_at] |= 0x1
+
+    response = upload(pg_signed_in, bytes(flagged), dry_run=True)
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "UNREADABLE_WORKBOOK"
+    assert scalar("SELECT count(*) FROM import_runs WHERE status = 'FAILED'") == 1
+
+
 def test_a_workbook_that_cannot_be_read_is_unprocessable(pg_signed_in: PgSession, scalar):
     response = upload(pg_signed_in, container_without_workbook(), dry_run=True)
 
