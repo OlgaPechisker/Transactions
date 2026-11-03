@@ -38,7 +38,7 @@ class CategorizationOverview:
     mappings: tuple[MappingRecord, ...]
     rules: tuple[RuleRecord, ...]
     custom_categories: tuple[CustomCategoryRecord, ...]
-    resulting_categories: tuple[NamedCountRecord, ...] = ()
+    resulting_categories: tuple[NamedCountRecord, ...]
 
 
 def _name_key(name: str) -> str:

@@ -43,7 +43,7 @@ from bank_transactions.persistence.orm.models import (
     ValidationBatchMemberRow,
     ValidationBatchRow,
 )
-from bank_transactions.persistence.providers.transaction_query import _contains_any
+from bank_transactions.persistence.providers.transaction_query import pending_filter_conditions
 from bank_transactions.persistence.public_ids import new_public_id
 from bank_transactions.persistence.records import (
     BatchMemberState,
@@ -97,16 +97,8 @@ def _batch_record(row: Any) -> BatchRecord:
 
 
 def _narrowed(statement: Select[Any], filter: PendingValidationFilter) -> Select[Any]:
-    """The same conditions, on the same columns, as `lock_pending_matching` of U6."""
-    if filter.countries:
-        statement = statement.where(_t.c.merchant_country.in_(filter.countries))
-    if filter.date_from is not None:
-        statement = statement.where(_t.c.transaction_date >= filter.date_from)
-    if filter.date_to is not None:
-        statement = statement.where(_t.c.transaction_date <= filter.date_to)
-    if filter.merchants:
-        statement = statement.where(_contains_any(_t.c.merchant_name_raw, filter.merchants))
-    return statement
+    """Narrows by the same conditions as `lock_pending_matching` (one shared definition)."""
+    return statement.where(*pending_filter_conditions(filter))
 
 
 def _ordering(view: Subquery, sort: SortSpec) -> list[Any]:

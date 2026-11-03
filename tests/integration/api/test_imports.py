@@ -254,10 +254,10 @@ def test_a_body_far_over_the_limit_is_refused_from_its_declared_length(pg_signed
     assert response.json()["code"] == "FILE_TOO_LARGE"
 
 
-def corrupt_content_types_stream(data: bytes) -> bytes:
-    """A real workbook whose [Content_Types].xml deflate stream is garbage."""
+def corrupt_content_types_stream(data: bytes, part: str = "[Content_Types].xml") -> bytes:
+    """A real workbook whose `part` has a garbage deflate stream."""
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        info = archive.getinfo("[Content_Types].xml")
+        info = archive.getinfo(part)
     header = data[info.header_offset : info.header_offset + 30]
     name_length, extra_length = (
         int.from_bytes(header[26:28], "little"),
@@ -306,6 +306,22 @@ def test_a_chunked_body_without_a_content_length_is_cut_off_at_the_limit(
     assert response.status_code == 413
     assert response.json()["code"] == "FILE_TOO_LARGE"
     assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_a_workbook_with_a_corrupted_sheet_stream_is_unprocessable(
+    pg_signed_in: PgSession, isracard, scalar
+):
+    sheet = next(
+        name
+        for name in zipfile.ZipFile(io.BytesIO(isracard)).namelist()
+        if name.startswith("xl/worksheets/sheet")
+    )
+
+    response = upload(pg_signed_in, corrupt_content_types_stream(isracard, sheet), dry_run=True)
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "UNREADABLE_WORKBOOK"
+    assert scalar("SELECT count(*) FROM import_runs WHERE status = 'FAILED'") == 1
 
 
 def test_a_workbook_that_cannot_be_read_is_unprocessable(pg_signed_in: PgSession, scalar):

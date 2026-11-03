@@ -14,6 +14,7 @@ from bank_transactions.api.dependencies import (
     include_param,
     sort_param,
 )
+from bank_transactions.api.group_labels import card_presenter, group_labeler
 from bank_transactions.api.problems import problem_responses
 from bank_transactions.api.schemas.common import GroupDto, TransactionDetailDto
 from bank_transactions.api.schemas.mappers import (
@@ -36,13 +37,10 @@ from bank_transactions.api.schemas.transactions import (
     TransactionSummaryDto,
     TripOptionDto,
 )
-from bank_transactions.domain.queries import UNKNOWN, Dimension, SortSpec, TransactionInclude
-from bank_transactions.services.card_service import CardView
-from bank_transactions.services.composition import ApiComposition
+from bank_transactions.domain.queries import Dimension, SortSpec, TransactionInclude
 from bank_transactions.services.read_models import (
     BillingSummaryRecord,
     GroupRecord,
-    VisibleCardRecord,
 )
 from bank_transactions.services.transaction_service import (
     TRANSACTION_SORT_FIELDS,
@@ -50,20 +48,6 @@ from bank_transactions.services.transaction_service import (
 )
 
 router = APIRouter(tags=["Transactions"])
-
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-# Labels of the group without a value (§1.9; the other dimensions follow the OQ-2 defaults).
-_MISSING_LABELS = {
-    Dimension.CATEGORY: "Uncategorized",
-    Dimension.CUSTOM_CATEGORY: "No custom category",
-    Dimension.COUNTRY: "Unknown country",
-    Dimension.CARD: "No card",
-    Dimension.CURRENCY: "No original currency",
-    Dimension.TRIP: "No trip",
-    Dimension.MERCHANT: "Unknown merchant",
-    Dimension.TYPE: "Unknown type",
-}
 
 
 def _to_summary(summary: BillingSummaryRecord) -> TransactionSummaryDto:
@@ -73,42 +57,16 @@ def _to_summary(summary: BillingSummaryRecord) -> TransactionSummaryDto:
     )
 
 
-def _label_of(
-    dimension: Dimension, key: str, present_card: CardPresent, result: TransactionPage
-) -> str:
-    match dimension:
-        case Dimension.CURRENCY if key == UNKNOWN:
-            return "Unknown currency"
-        case Dimension.MONTH:
-            year, month = key.split("-")
-            return f"{_MONTHS[int(month) - 1]} {year}"
-        case Dimension.WEEK:
-            return f"Week of {key}"
-        case Dimension.CARD:
-            cards: dict[str, VisibleCardRecord] = {card.public_id: card for card in result.cards}
-            return present_card(cards[key]).label if key in cards else key
-        case Dimension.TRIP:
-            names: dict[str, str] = {trip.public_id: trip.name for trip in result.trips}
-            return names.get(key, key)
-        case _:
-            return key
-
-
 def _to_groups(
     groups: tuple[GroupRecord, ...],
     dimension: Dimension,
     present_card: CardPresent,
     result: TransactionPage,
 ) -> list[GroupDto]:
-    return [
-        to_group(
-            group,
-            _MISSING_LABELS[dimension]
-            if group.key is None
-            else _label_of(dimension, group.key, present_card, result),
-        )
-        for group in groups
-    ]
+    label_of = group_labeler(
+        present_card, result.cards, ((trip.public_id, trip.name) for trip in result.trips)
+    )
+    return [to_group(group, label_of(dimension, group.key)) for group in groups]
 
 
 def _iso(value: date | None) -> str | None:
@@ -134,7 +92,7 @@ def list_transactions(
     group_by: Annotated[Dimension | None, Query(alias="groupBy")] = None,
 ) -> TransactionListResponse:
     result = comp.transactions.list(user, filter, group_by, include, sort, page)
-    present_card = _card_presenter(comp, user.user_display_name)
+    present_card = card_presenter(comp, user.user_display_name)
     response = TransactionListResponse(
         items=[to_transaction_list_item(record, present_card) for record in result.page.items],
         meta=to_page_meta(result.page),
@@ -146,13 +104,6 @@ def list_transactions(
     return response
 
 
-def _card_presenter(comp: ApiComposition, user_name: str) -> CardPresent:
-    def present(record: VisibleCardRecord) -> CardView:
-        return comp.card_presenter.present(record, user_name)
-
-    return present
-
-
 @router.get(
     "/transactions/{transactionId}",
     operation_id="getTransaction",
@@ -162,14 +113,14 @@ def get_transaction(
     transaction_id: TransactionIdPath, user: CurrentUser, comp: Composition
 ) -> TransactionDetailDto:
     record = comp.transactions.get(user, transaction_id)
-    return to_transaction_detail(record, _card_presenter(comp, user.user_display_name))
+    return to_transaction_detail(record, card_presenter(comp, user.user_display_name))
 
 
 @router.get("/filter-options", operation_id="getFilterOptions")
 def get_filter_options(user: CurrentUser, comp: Composition) -> FilterOptionsDto:
     view = comp.transactions.filter_options(user)
     options = view.options
-    present_card = _card_presenter(comp, user.user_display_name)
+    present_card = card_presenter(comp, user.user_display_name)
     return FilterOptionsDto(
         categories=[
             BankCategoryOptionDto(bank=o.name, count=o.count) for o in options.bank_categories

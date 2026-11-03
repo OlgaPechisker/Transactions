@@ -1,10 +1,10 @@
 # REST API contract – UI ↔ backend
 
-Status: **current V1 contract; implementation not started**. Machine-readable version: [`openapi.yaml`](openapi.yaml). Data mapping: [`screen-to-data-map.md`](screen-to-data-map.md). Architecture: [`Phase 1`](../api-design-phase-1.md). Implementation plan: [`Phase 2`](../api-design-phase-2.md).
+Status: **current V1 contract; implemented** (served under `/api/v1`, checked by `tests/contracts/test_openapi_conformance.py`). Machine-readable version: [`openapi.yaml`](openapi.yaml). Data mapping: [`screen-to-data-map.md`](screen-to-data-map.md). Architecture: [`Phase 1`](../api-design-phase-1.md). Implementation plan: [`Phase 2`](../api-design-phase-2.md).
 
 This is the canonical API contract. New persistence is required for users, ownership claims, sessions, trips, categories, and currency-validation audit.
 
-**Implementation status:** in progress (U0 contract freeze done). Exact provider interfaces, DDL, and the work breakdown are in [Phase 2](../api-design-phase-2.md). The Phase 2 §A amendments are applied in this contract: `ImportIssue.sheetPosition`/`row` are always present and nullable, the session cookie is named `bt_session`, and `ownerName` falls back to the caller's display name. The open-question defaults of Phase 2 §B.9 (OQ-1…OQ-9) apply until they are confirmed.
+**Implementation status:** implemented (U0–U11); the app exposes exactly the 31 operations of `openapi.yaml`. Exact provider interfaces, DDL, and the work breakdown are in [Phase 2](../api-design-phase-2.md). The Phase 2 §A amendments are applied in this contract: `ImportIssue.sheetPosition`/`row` are always present and nullable, the session cookie is named `bt_session`, and `ownerName` falls back to the caller's display name. The open-question defaults of Phase 2 §B.9 (OQ-1…OQ-9) apply until they are confirmed.
 
 **Out of scope for v1:** sharing between users (invitations, "Shared with me", merged view, view-mode preference). Every endpoint returns and changes only the caller's own data.
 

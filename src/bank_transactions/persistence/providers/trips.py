@@ -18,8 +18,8 @@ from bank_transactions.persistence.db import translates_database_errors
 from bank_transactions.persistence.interfaces import TripRepository
 from bank_transactions.persistence.orm.models import TransactionRow, TripExclusionRow, TripRow
 from bank_transactions.persistence.providers.transaction_query import (
-    _summaries,
-    _summary_statement,
+    summarize,
+    summary_statement,
 )
 from bank_transactions.persistence.public_ids import new_public_id
 from bank_transactions.persistence.records import (
@@ -96,7 +96,7 @@ class SqlTripRepository(TripRepository):
             .select_from(membership.join(_t, _t.c.id == membership.c.transaction_id))
             .subquery("facts")
         )
-        summaries = _summaries(self._session.execute(_summary_statement(facts, True)).all(), True)
+        summaries = summarize(self._session.execute(summary_statement(facts, True)).all(), True)
         counts: dict[str, dict[str, int]] = defaultdict(dict)
         for row in self._session.execute(
             select(membership.c.trip_public_id, membership.c.membership, func.count()).group_by(
@@ -213,8 +213,8 @@ class SqlTripRepository(TripRepository):
             if key is not None:
                 columns.append(key.label("group_key"))
             filtered = select(*columns).where(in_trip, *conditions).subquery("filtered")
-            rows = self._session.execute(_summary_statement(filtered, key is not None)).all()
-            return _summaries(rows, key is not None)
+            rows = self._session.execute(summary_statement(filtered, key is not None)).all()
+            return summarize(rows, key is not None)
 
         outside = or_(
             view.c.transaction_date < dates.start_date, view.c.transaction_date > dates.end_date
