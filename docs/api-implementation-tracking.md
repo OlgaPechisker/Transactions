@@ -76,6 +76,9 @@ only through a separate contract-change commit coordinated by the team leader.
 | U10 | 1 | 5f2b7e5 | ruff ✔, mypy ✔, pytest 472 targeted passed | dev-u10. Review: APPROVED with NITs |
 | U10 | 2 | 8f76819 | ruff ✔, mypy ✔, pytest 104 U10 tests passed | fixes NITs R2–R5. Re-review: APPROVED. Merged as 9f5e6e9 |
 | integration | – | 9f5e6e9 | feature branch: ruff ✔, mypy ✔ (141 files), pytest 2391 passed / 1 skipped / 9 known max_parser failures | cycle 4 complete |
+| U11 | 1 | 771562c | ruff ✔, mypy ✔ (142 files), pytest 2532 passed / 1 skipped (worktree, dev); 1224 contracts+api+workbook (leader) | dev-u11 (cycle 5). Review (tech-lead-c5): CHANGES REQUIRED (R1 minor, R2–R3 NIT) |
+| U11 | 2 | 67d19a4 | ruff ✔, mypy ✔, pytest 179 targeted passed / 1 skipped | fixes R1–R3. Re-review: APPROVED. Merged as 38c51dd |
+| integration | – | 38c51dd | feature branch: ruff ✔, mypy ✔ (142 files), pytest 2526 passed / 1 skipped / 9 known max_parser failures | cycle 5 complete – plan closed |
 
 ## Review findings
 | Unit | # | Severity | Finding | Decision | Resolved in |
@@ -144,6 +147,10 @@ only through a separate contract-change commit coordinated by the team leader.
 | U10 | R1 | MINOR | private `_contains_any` import; `_narrowed` duplicates `lock_pending_matching` conditions | deferred | U11 (one public pending-filter helper) |
 | U10 | R2–R5 | NIT | NULL→"0.00" fallback, redundant filter, asserts, missing API NOT_PENDING test | valid → dev-u10 | U10 iter 2 |
 | U10 | R6 | NIT (docs) | plan op 23 body lists `currency`; frozen openapi/contract (`id, validatedCount, transactionIds, createdAt`) wins — plan erratum | recorded | – |
+| U3-R4, U7-R4..R6, U8-R1, U9-R3/R4/R6, U10-R1 | – | – | deferred items | resolved | U11 iter 1 (public query helpers, shared `pending_filter_conditions`, `api/group_labels.py`, groupBy=trip API test, workbook EOFError/NotImplementedError) |
+| U11 | R1 | MINOR | encrypted ZIP part raised RuntimeError → 500 | valid → dev-u11 | U11 iter 2 (→ 422 UNREADABLE_WORKBOOK) |
+| U11 | R2 | NIT | trips router duplicated card presenter / "Uncategorized" label | valid → dev-u11 | U11 iter 2 |
+| U11 | R3 | NIT | E2E `/me` check asserted only pending count | valid → dev-u11 | U11 iter 2 |
 
 Installment plan derivation (U2-R4, for U6): perPayment = round_amount(billing_amount) in billing currency; planTotal = plan_total_amount in plan_currency when stored, else perPayment × total in billing currency; remainingPayments = max(total − number, 0); remainingAmount = perPayment × remainingPayments in billing currency. An empty month ∩ from/to range returns 400 INVALID_FILTER (U0-R8 implemented by U2).
 
