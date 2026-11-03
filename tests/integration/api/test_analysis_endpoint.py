@@ -378,8 +378,40 @@ def test_the_range_and_the_billing_currency_are_required(pg_signed_in, card, mis
     assert response.json()["code"] == "INVALID_FILTER"
 
 
+def test_a_period_group_is_compared_with_the_period_at_the_same_position(pg_signed_in, card):
+    body = analyze(pg_signed_in, groupBy="month", compare="previous", include="groups").json()
+
+    assert [group["key"] for group in body["groups"]] == ["2024-01", "2024-03"]
+    assert [(g["net"], g["count"], g["previous"]) for g in body["groups"]] == [
+        (money("70.00"), 2, {"net": money("0.00"), "count": 0}),
+        (money("86.50"), 2, {"net": money("25.00"), "count": 1}),
+    ]
+
+
+def test_the_groups_of_a_period_dimension_are_the_same_keys_without_comparing(pg_signed_in, card):
+    body = analyze(pg_signed_in, groupBy="month", include="groups").json()
+
+    assert [group["key"] for group in body["groups"]] == ["2024-01", "2024-03"]
+    assert all(group["previous"] is None for group in body["groups"])
+
+
 def test_a_range_over_a_thousand_buckets_is_an_invalid_filter(pg_signed_in, card):
     response = analyze(pg_signed_in, bucket="day", **{"from": "2020-01-01"})
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_FILTER"
+
+
+@pytest.mark.parametrize("bucket", ["day", "month"])
+def test_a_range_of_more_than_a_thousand_months_is_refused_even_for_groups_only(
+    pg_signed_in, card, bucket
+):
+    response = analyze(
+        pg_signed_in,
+        bucket=bucket,
+        include="groups",
+        **{"from": "0001-01-01", "to": "9999-12-31"},
+    )
 
     assert response.status_code == 400
     assert response.json()["code"] == "INVALID_FILTER"

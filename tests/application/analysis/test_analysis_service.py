@@ -10,7 +10,7 @@ from tests.fakes.auth import make_auth_context
 from tests.fakes.clock import FakeClock
 from tests.fakes.unit_of_work import InMemoryUnitOfWorkFactory
 
-from bank_transactions.domain.calendar import bucket_start
+from bank_transactions.domain.calendar import bucket_key, bucket_start
 from bank_transactions.domain.enums import IssuerCode
 from bank_transactions.domain.errors import InvalidQueryError
 from bank_transactions.domain.ids import CardId, IdentifierToken, PublicId, TripId
@@ -40,6 +40,12 @@ CARD = VisibleCardRecord(
 TRIP = TripRecord(TripId(1), PublicId("trp_1"), "Rome", "EUR", date(2025, 7, 1), date(2025, 7, 9))
 START = date(2025, 1, 1)  # a Wednesday
 MONDAY = date(2025, 1, 6)
+_PERIOD_BUCKETS = {
+    Dimension.DAY: Bucket.DAY,
+    Dimension.WEEK: Bucket.WEEK,
+    Dimension.MONTH: Bucket.MONTH,
+    Dimension.YEAR: Bucket.YEAR,
+}
 
 
 class Ledger(AnalysisRepository):
@@ -55,8 +61,13 @@ class Ledger(AnalysisRepository):
 
     def groups(self, user_id, query, dimension):
         totals: dict[str | None, list[Decimal]] = defaultdict(list)
-        for _, category, _, net in self._inside(query):
-            totals[category].append(Decimal(net))
+        for day, category, _, net in self._inside(query):
+            key = category
+            if dimension in _PERIOD_BUCKETS:
+                key = bucket_key(
+                    bucket_start(day, _PERIOD_BUCKETS[dimension]), _PERIOD_BUCKETS[dimension]
+                )
+            totals[key].append(Decimal(net))
         return tuple(
             AnalysisGroupRecord(key, len(nets), sum(nets, Decimal(0)))
             for key, nets in totals.items()
@@ -113,7 +124,7 @@ ROWS = [
 
 @pytest.fixture
 def ledger() -> Ledger:
-    return Ledger(ROWS)
+    return Ledger(list(ROWS))
 
 
 @pytest.fixture
@@ -288,6 +299,73 @@ def test_groups_of_the_comparison_range_only_are_listed_with_zero_current(servic
     assert result.comparison_totals.net == Decimal("-30.00")
 
 
+def test_period_groups_are_compared_with_the_period_at_the_same_position(service):
+    result = service.analyze(
+        ANN,
+        query(
+            group_by=Dimension.MONTH,
+            date_from=date(2025, 1, 1),
+            date_to=date(2025, 3, 31),
+            compare=CompareMode.PREVIOUS,
+        ),
+    )
+
+    assert result.groups is not None
+    assert [
+        (g.key, g.net, g.count, g.previous.net, g.previous.count)
+        for g in result.groups
+        if g.previous is not None
+    ] == [
+        ("2025-01", Decimal("-150.00"), 3, Decimal(0), 0),
+        ("2025-03", Decimal("-35.00"), 2, Decimal("-30.00"), 1),
+    ]
+    assert len(result.groups) == 2
+
+
+def test_period_groups_never_list_a_period_of_the_comparison_range_only(service, ledger):
+    ledger.rows += [
+        (date(2024, 2, 10), "Food", "Cafe", "-20.00"),
+        (date(2024, 3, 5), "Food", "Cafe", "-20.00"),
+    ]
+
+    result = service.analyze(
+        ANN,
+        query(
+            group_by=Dimension.MONTH,
+            date_from=date(2025, 1, 1),
+            date_to=date(2025, 3, 31),
+            compare=CompareMode.YOY,
+        ),
+    )
+
+    assert result.groups is not None
+    assert [g.key for g in result.groups] == ["2025-01", "2025-03"]
+    assert [(g.previous.net, g.previous.count) for g in result.groups if g.previous] == [
+        (Decimal(0), 0),
+        (Decimal("-20.00"), 1),
+    ]
+
+
+def test_a_year_group_is_compared_with_the_year_of_the_comparison_range(service):
+    result = service.analyze(
+        ANN,
+        query(
+            group_by=Dimension.YEAR,
+            date_from=date(2025, 1, 1),
+            date_to=date(2025, 3, 31),
+            compare=CompareMode.PREVIOUS,
+        ),
+    )
+
+    assert result.groups is not None
+    assert [g.key for g in result.groups] == ["2025"]
+    assert result.groups[0].previous is not None
+    assert (result.groups[0].previous.net, result.groups[0].previous.count) == (
+        Decimal("-30.00"),
+        1,
+    )
+
+
 def test_a_group_only_in_the_comparison_range_has_zero_current(service):
     result = service.analyze(
         ANN,
@@ -394,8 +472,30 @@ def test_a_long_range_is_fine_when_no_buckets_are_shown(service):
     )
 
     assert result.groups is not None
+    assert result.totals.monthly_average.complete_months == 3
     assert result.time_series is None
     assert result.matrix is None
+
+
+@pytest.mark.parametrize("compare", [CompareMode.NONE, CompareMode.PREVIOUS])
+@pytest.mark.parametrize("bucket", [Bucket.DAY, Bucket.MONTH])
+def test_a_range_of_more_than_a_thousand_months_is_an_invalid_filter_even_without_buckets(
+    service, factory, bucket, compare
+):
+    with pytest.raises(InvalidQueryError) as raised:
+        service.analyze(
+            ANN,
+            query(
+                date_from=date(1, 1, 1),
+                date_to=date(9999, 12, 31),
+                bucket=bucket,
+                compare=compare,
+                include=frozenset({AnalysisInclude.GROUPS}),
+            ),
+        )
+
+    assert raised.value.code == InvalidQueryError.INVALID_FILTER
+    assert factory.created == []
 
 
 @pytest.mark.parametrize(

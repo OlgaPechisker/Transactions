@@ -276,13 +276,15 @@ def get_spending_analysis(
     bucket: Bucket = Bucket.MONTH,
     series_by: Annotated[Dimension, Query(alias="seriesBy")] = Dimension.CATEGORY,
 ) -> SpendingAnalysisDto:
-    assert filter.billing_currency is not None  # the filter dependency requires it
+    billing_currency = filter.billing_currency
+    if billing_currency is None:
+        raise InvalidQueryError(InvalidQueryError.INVALID_FILTER, "billingCurrency is required.")
     try:
         query = AnalysisQuery(
             filter,
             date_from,
             date_to,
-            filter.billing_currency,
+            billing_currency,
             compare,
             group_by,
             bucket,

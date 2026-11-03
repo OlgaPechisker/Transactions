@@ -57,6 +57,12 @@ __all__ = [
 
 MAX_BUCKETS = 1000
 _PERIODS = frozenset({Dimension.DAY, Dimension.WEEK, Dimension.MONTH, Dimension.YEAR})
+_PERIOD_BUCKETS = {
+    Dimension.DAY: Bucket.DAY,
+    Dimension.WEEK: Bucket.WEEK,
+    Dimension.MONTH: Bucket.MONTH,
+    Dimension.YEAR: Bucket.YEAR,
+}
 _DEFAULT_ROW_DIMENSION = Dimension.CATEGORY
 
 
@@ -159,6 +165,8 @@ class AnalysisService:
         wants_groups = AnalysisInclude.GROUPS in query.include
         wants_series = AnalysisInclude.TIME_SERIES in query.include
         wants_matrix = AnalysisInclude.MATRIX in query.include
+        # the totals and the monthly average always walk the months of every range
+        _check_bucket_count(Bucket.MONTH, current, comparison)
         if wants_series or wants_matrix:
             _check_bucket_count(query.bucket, current, comparison)
         row_dimension = _row_dimension(query)
@@ -182,7 +190,6 @@ class AnalysisService:
             labelled = _dimensions_to_label(query, wants_groups, wants_matrix, row_dimension)
             cards = uow.visible_cards.list_visible(user_id) if Dimension.CARD in labelled else ()
             trips = uow.trips.list(user_id) if Dimension.TRIP in labelled else ()
-        columns = periods(current, query.bucket, today)
         return SpendingAnalysisView(
             query=query,
             range=current,
@@ -191,10 +198,26 @@ class AnalysisService:
             comparison_totals=None if before is None else before.totals,
             groups=None
             if now.groups is None
-            else _group_views(now.groups, None if before is None else before.groups),
+            else _group_views(
+                query.group_by,
+                now.groups,
+                None if before is None else before.groups,
+                current,
+                comparison,
+                today,
+            ),
             time_series=now.time_series,
             previous_time_series=None if before is None else before.time_series,
-            matrix=_matrix(row_dimension, query.bucket, columns, cells) if wants_matrix else None,
+            matrix=(
+                _matrix(
+                    row_dimension,
+                    query.bucket,
+                    periods(current, query.bucket, today),
+                    cells,
+                )
+                if wants_matrix
+                else None
+            ),
             cards=cards,
             trips=trips,
         )
@@ -275,11 +298,37 @@ def _key_order(key: str | None) -> tuple[bool, str]:
 
 
 def _group_views(
+    dimension: Dimension,
     current: tuple[AnalysisGroupRecord, ...],
     previous: tuple[AnalysisGroupRecord, ...] | None,
+    current_range: DateRange,
+    comparison_range: DateRange | None,
+    today: date,
 ) -> tuple[AnalysisGroupView, ...]:
     """Groups ordered by key, the missing group last. When comparing, a group present in only
-    one of the two ranges is listed with zeros for the other."""
+    one of the two ranges is listed with zeros for the other. The groups of a period dimension
+    are the periods of the current range, each compared with the period at the same position
+    of the comparison range."""
+    if previous is not None and comparison_range is not None and dimension in _PERIODS:
+        unit = _PERIOD_BUCKETS[dimension]
+        counterpart = {
+            now.key: before.key
+            for now, before in zip(
+                periods(current_range, unit, today),
+                periods(comparison_range, unit, today),
+                strict=False,
+            )
+        }
+        earlier_by_key = {group.key: group for group in previous}
+        return tuple(
+            AnalysisGroupView(
+                group.key,
+                group.net,
+                group.count,
+                _previous_view(earlier_by_key.get(counterpart.get(group.key or ""))),
+            )
+            for group in sorted(current, key=lambda group: _key_order(group.key))
+        )
     now = {group.key: group for group in current}
     before = None if previous is None else {group.key: group for group in previous}
     keys = set(now) if before is None else set(now) | set(before)
@@ -292,14 +341,14 @@ def _group_views(
                 key,
                 group.net if group else Decimal(0),
                 group.count if group else 0,
-                None
-                if before is None
-                else PreviousGroupView(
-                    earlier.net if earlier else Decimal(0), earlier.count if earlier else 0
-                ),
+                None if before is None else _previous_view(earlier),
             )
         )
     return tuple(views)
+
+
+def _previous_view(group: AnalysisGroupRecord | None) -> PreviousGroupView:
+    return PreviousGroupView(group.net if group else Decimal(0), group.count if group else 0)
 
 
 def _time_points(
