@@ -167,6 +167,11 @@ def not_implemented() -> None:
     raise NotImplementedError
 
 
+@probe.get("/stub")
+def stub(user: CurrentUser) -> None:
+    raise NotImplementedError
+
+
 @probe.get("/whoami")
 def whoami(user: CurrentUser) -> dict[str, int]:
     return {"userId": user.user_id}
@@ -479,7 +484,7 @@ def test_the_stubbed_operations_answer_501_until_they_are_built(
 ):
     token = issue_session().token
 
-    response = client.get("/api/v1/categorization", headers={"Authorization": f"Bearer {token}"})
+    response = client.get("/api/v1/probe/stub", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 501
     assert problem(response)["code"] == "NOT_IMPLEMENTED"
