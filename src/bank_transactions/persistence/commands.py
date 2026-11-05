@@ -8,16 +8,20 @@ from bank_transactions.domain.enums import (
     Channel,
     ImportStatus,
     IssuerCode,
+    LoginKeyKind,
     ReviewReason,
     TransactionType,
 )
 from bank_transactions.domain.ids import (
     AccountId,
     CardId,
+    ClaimId,
+    CustomCategoryId,
     IdentifierToken,
     ImportRunId,
     InstallmentPlanId,
     OwnerId,
+    UserId,
 )
 from bank_transactions.domain.immutability import freeze_field
 from bank_transactions.domain.keys import OwnerMatchKey
@@ -55,8 +59,11 @@ class ImportRunOutcome:
 
 @dataclass(frozen=True)
 class NewOwner:
+    """`user_id` is None only for the legacy CLI pipeline; the API always sets it."""
+
     display_name: str
     match_key: OwnerMatchKey
+    user_id: UserId | None = None
 
     def __post_init__(self) -> None:
         if not self.display_name.strip():
@@ -78,6 +85,7 @@ class NewCard:
     issuer_code: IssuerCode
     last4_enc: IdentifierToken
     display_name: str | None
+    claim_id: ClaimId | None = None
 
 
 @dataclass(frozen=True)
@@ -152,3 +160,69 @@ class NewTransactionAggregate:
 
     def __post_init__(self) -> None:
         freeze_field(self, "review_reasons", frozenset)
+
+
+@dataclass(frozen=True)
+class NewUser:
+    """`email_key` is the normalised (stripped, casefolded) email used for sign-in lookups."""
+
+    email: str
+    email_key: str
+    display_name: str
+    password_hash: str
+
+
+@dataclass(frozen=True)
+class NewSession:
+    user_id: UserId
+    token_digest: bytes
+    created_at: datetime
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class NewLoginFailure:
+    kind: LoginKeyKind
+    key_digest: bytes
+    occurred_at: datetime
+
+
+@dataclass(frozen=True)
+class NewTrip:
+    user_id: UserId
+    name: str
+    currency: str
+    start_date: date
+    end_date: date
+
+    def __post_init__(self) -> None:
+        if self.end_date < self.start_date:
+            raise ValueError("a trip cannot end before it starts")
+
+
+@dataclass(frozen=True)
+class NewCustomCategory:
+    user_id: UserId
+    name: str
+    name_key: str
+
+
+@dataclass(frozen=True)
+class NewRule:
+    """`terms` are already normalised, distinct and non-empty."""
+
+    user_id: UserId
+    category_id: CustomCategoryId
+    terms: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        freeze_field(self, "terms", tuple)
+        if not self.terms:
+            raise ValueError("a rule needs at least one term")
+
+
+@dataclass(frozen=True)
+class NewValidationBatch:
+    user_id: UserId
+    currency: str
+    created_at: datetime

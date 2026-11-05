@@ -78,7 +78,7 @@ def test_needs_input_report_can_have_no_issuer_and_unresolved_cards():
 
 
 def test_ports_and_parser_contract_are_narrow_abstractions():
-    assert WorkbookReader.__abstractmethods__ == {"open"}
+    assert WorkbookReader.__abstractmethods__ == {"open", "open_bytes"}
     assert ParserSelector.__abstractmethods__ == {"select"}
     assert IdentifierProtector.__abstractmethods__ == {"encrypt", "decrypt"}
     assert StatementParser.__abstractmethods__ == {"sniff", "read_context", "read_transactions"}

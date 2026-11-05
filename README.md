@@ -6,9 +6,9 @@ reach the database; the library imports, deduplicates and audits each file.
 
 See [docs/importer-design.md](docs/importer-design.md) for the design and behavior rules,
 [docs/sequence-diagram.md](docs/sequence-diagram.md) for the diagrams, and
-[docs/api-design-phase-1.md](docs/api-design-phase-1.md) for the planned REST API (not yet implemented;
-detailed plan in [docs/api-design-phase-2.md](docs/api-design-phase-2.md), wire contract in
-[docs/api-contract/](docs/api-contract/)).
+[docs/api-design-phase-1.md](docs/api-design-phase-1.md) for the REST API design (detailed plan in
+[docs/api-design-phase-2.md](docs/api-design-phase-2.md), wire contract in
+[docs/api-contract/](docs/api-contract/)); the API itself is described in [API](#api).
 
 ## Install
 
@@ -25,8 +25,8 @@ Settings come from environment variables; `--dsn` overrides `BT_DSN` for a singl
 
 | Variable | Needed by | Meaning |
 | --- | --- | --- |
-| `BT_DSN` | `import`, `init-db` | SQLAlchemy URL, for example `postgresql+psycopg://user:password@host:5432/db` |
-| `BT_CIPHER_KEY` | `import` | Base64 of 32, 48 or 64 random bytes (AES-SIV key). Keep it outside source control; losing it makes stored identifiers unreadable |
+| `BT_DSN` | `import`, `init-db`, `create-user`, `serve` | SQLAlchemy URL, for example `postgresql+psycopg://user:password@host:5432/db` |
+| `BT_CIPHER_KEY` | `import`, `create-user`, `serve` | Base64 of 32, 48 or 64 random bytes (AES-SIV key). Keep it outside source control; losing it makes stored identifiers unreadable |
 | `BT_TWO_DIGIT_YEARS_BACK` | optional | How many years back a two-digit year may reach (0–99, default 80) |
 | `BT_FEE_KEYWORDS` | optional | Comma-separated issuer words that mark a foreign-currency fee row; replaces the defaults |
 | `BT_FEE_WINDOW_DAYS` | optional | Days a fee row may differ from its transaction date (default 3) |
@@ -43,12 +43,23 @@ Generate a key once:
 ```powershell
 bank-transactions detect statement.xlsx            # names the issuer; needs no DSN or key
 bank-transactions init-db                          # creates or upgrades the schema; needs the DSN only
-bank-transactions import statement.xlsx            # prompts when an identity must be chosen
-bank-transactions import statement.xlsx --dry-run  # runs every step, then rolls the data back
-bank-transactions import statement.xlsx --non-interactive
+bank-transactions create-user --email dana@example.com --name "Dana Levi"  # prompts twice for the password (never an argument); needs the DSN and key
+bank-transactions import statement.xlsx --user dana@example.com            # prompts when an identity must be chosen
+bank-transactions import statement.xlsx --user dana@example.com --dry-run  # runs every step, then rolls the data back
+bank-transactions import statement.xlsx --user dana@example.com --non-interactive
 ```
 
 `python -m bank_transactions ...` is equivalent.
+
+`create-user` is the only way to add a user (the API has no registration endpoint). The password is
+read from a hidden prompt, asked twice, and is never accepted as an argument. The email is compared
+after trimming and case-folding; a duplicate or invalid email, or mismatched passwords, is a usage
+error (exit 2) and nothing is written.
+
+`import` requires `--user <email>`: the email (compared after trimming and case-folding) of an
+existing user, who becomes the owner of every card, owner and account the import creates. An unknown
+email is a usage error (exit 2) and nothing is written. A card already linked to another user
+fails the import (exit 1) without saying whose it is.
 
 An import reports the rows read, imported, duplicated, skipped and needing review, then any
 warnings and row issues. The report never contains card or account numbers; only an interactive
@@ -60,7 +71,7 @@ identity prompt shows a card's masked last 4 (see [Privacy](#privacy)).
 | --- | --- |
 | 0 | Success |
 | 1 | The command failed |
-| 2 | Usage or configuration error (including a missing DSN or key) |
+| 2 | Usage or configuration error (including a missing DSN or key, or an unknown `--user`) |
 | 3 | An identity must be chosen; `--non-interactive` never guesses, so nothing was imported |
 | 4 | Imported, but some rows had errors (`PARTIAL`) |
 | 130 | Interrupted; nothing was reported as completed |
@@ -104,7 +115,7 @@ from bank_transactions.config import Settings
 
 settings = Settings.from_env(os.environ)
 service = build_import_service(settings, interactive=False)
-report = service.import_file(Path("statement.xlsx"), dry_run=True)
+report = service.import_file(Path("statement.xlsx"), user_id=user_id, dry_run=True)
 ```
 
 `StatementImportService` depends only on abstractions (`WorkbookReader`, `ParserSelector`,
@@ -134,6 +145,43 @@ the card unresolved. The resolver never touches the database, and the service va
 answer before it is applied. Pass the resolver to `StatementImportService`; the CLI uses
 `CliIdentityResolver` for prompts and `NonInteractiveResolver` for `--non-interactive`.
 
+## API
+
+The same database is served as a REST API under `/api/v1` (FastAPI, run with Uvicorn). The wire
+contract is in [docs/api-contract/](docs/api-contract/) (prose in `api-contract.md`, machine-readable
+in `openapi.yaml`); a test checks that the running app exposes exactly those 31 operations.
+
+```powershell
+bank-transactions create-user --email dana@example.com --name "Dana Levi"   # the only way to add a user
+bank-transactions serve --dsn <url>                                         # http://127.0.0.1:8000/api/v1
+bank-transactions serve --host 0.0.0.0 --port 9000
+```
+
+`serve` needs `BT_DSN` (or `--dsn`) and `BT_CIPHER_KEY`, and expects the schema to exist
+(`init-db`). Interactive documentation is at `/api/v1/docs` of the running server.
+
+### Authentication
+
+`POST /api/v1/sessions` with `{"email": ..., "password": ...}` returns a session token and sets the
+`bt_session` cookie (`HttpOnly; Secure; SameSite=Lax`); sessions last 12 hours.
+
+* **Bearer** (scripts, other clients): send `Authorization: Bearer <token>` on every request. No CSRF
+  header is needed.
+* **Cookie** (browsers): the cookie is sent automatically. Every request that changes state
+  (`POST`, `PUT`, `PATCH`, `DELETE`) must also carry `X-CSRF-Token`, whose value is `csrfToken` from
+  `GET /api/v1/me`; otherwise the answer is `403 CSRF_VALIDATION_FAILED`. A bearer token wins over a cookie.
+
+```powershell
+$session = Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/v1/sessions `
+  -ContentType application/json -Body '{"email":"dana@example.com","password":"..."}'
+$auth = @{ Authorization = "Bearer $($session.token)" }
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/transactions -Headers $auth
+curl.exe -H "Authorization: Bearer <token>" -F "file=@statement.xlsx" -F dryRun=true http://127.0.0.1:8000/api/v1/imports
+```
+
+A user sees only their own cards and transactions; anything else answers `404`. Errors are
+`application/problem+json` documents with a stable `code`.
+
 ## Tests
 
 ```powershell
@@ -147,3 +195,12 @@ PostgreSQL tests need `BT_TEST_DSN` pointing at a disposable PostgreSQL 15+ serv
 `postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres`. Each test creates and drops its
 own schema and never touches `public`. Without the variable these tests fail on purpose instead of
 being skipped silently; use `-m "not postgres"` to leave them out.
+
+The API tests run in both auth modes. `tests/contracts/test_openapi_conformance.py` compares the app
+with `docs/api-contract/openapi.yaml` and needs no database; `tests/integration/api/test_e2e_*.py`
+drive the whole API on PostgreSQL with the workbooks in `examples/`:
+
+```powershell
+$env:BT_TEST_DSN = "postgresql+psycopg://user:password@127.0.0.1:5432/postgres"
+.\.venv\Scripts\python.exe -m pytest tests/contracts tests/integration/api
+```

@@ -3,6 +3,10 @@
 Identity changes, plans and transactions share ONE live unit of work. A normal run commits it
 after a successful insertion; a dry run always rolls it back. The audit record uses separate
 committed units of work, so it survives either outcome. The service has no issuer-specific code.
+
+`import_file` reads a path (the CLI); `import_upload` takes the bytes of an upload already hashed
+and opened (the API's `ImportApiService`). Both run the same pipeline and both refuse to touch a
+card key another user has claimed.
 """
 
 from collections import Counter
@@ -16,8 +20,9 @@ from bank_transactions.domain.errors import (
     BankTransactionsError,
     IdentityUnresolvedError,
     ParseError,
+    UnreadableWorkbookError,
 )
-from bank_transactions.domain.ids import ImportRunId
+from bank_transactions.domain.ids import ImportRunId, PublicId, UserId
 from bank_transactions.domain.issues import RowIssue
 from bank_transactions.domain.models import (
     CardHintKey,
@@ -27,6 +32,7 @@ from bank_transactions.domain.models import (
     StatementParseResult,
 )
 from bank_transactions.domain.money import Currency
+from bank_transactions.domain.review import is_user_visible_unknown_currency
 from bank_transactions.domain.text import contains_identifier
 from bank_transactions.domain.workbook import WorkbookView
 from bank_transactions.identity.interfaces import IdentityResolver
@@ -38,7 +44,7 @@ from bank_transactions.persistence.mappers import TransactionMapper
 from bank_transactions.ports.identifier_protector import IdentifierProtector
 from bank_transactions.ports.parser_selector import ParserSelector
 from bank_transactions.ports.workbook_reader import WorkbookReader
-from bank_transactions.services.audit_trail import AuditTrail, hash_file
+from bank_transactions.services.audit_trail import AuditTrail, hash_bytes, hash_file
 from bank_transactions.services.deduplication import select_new_transactions
 from bank_transactions.services.identity_gate import IdentityGate, statement_identifiers
 from bank_transactions.services.report import ImportReport
@@ -47,6 +53,12 @@ from bank_transactions.services.totals_check import compare_totals
 _MAX_SUMMARY_CHARS = 500
 _TOTALS_UNAVAILABLE = "The file declares no totals, so the totals check was not available."
 _INTERRUPTED = "import interrupted"
+_UNREADABLE = "The file could not be read as a workbook."
+_UNPARSEABLE = "The statement could not be read."
+
+IdentityStep = Callable[[StatementContext, UnitOfWork], ResolvedCards]
+"""Binds every card of a statement inside the live unit of work (claims, identity gate).
+Raises IdentityUnresolvedError when input is still needed."""
 
 
 def utc_now() -> datetime:
@@ -55,7 +67,7 @@ def utc_now() -> datetime:
 
 @dataclass
 class _Attempt:
-    """Mutable bookkeeping of one import_file call; never leaves the service."""
+    """Mutable bookkeeping of one import call; never leaves the service."""
 
     run_id: ImportRunId
     dry_run: bool
@@ -72,6 +84,16 @@ class _Counts:
     duplicate: int
     skipped: int
     needing_review: int
+
+
+@dataclass(frozen=True)
+class UploadImport:
+    """An uploaded file's report with the run's API identity."""
+
+    report: ImportReport
+    public_id: PublicId
+    sha256: str
+    started_at: datetime
 
 
 class StatementImportService:
@@ -92,29 +114,76 @@ class StatementImportService:
         self._gate = IdentityGate(protector, resolver)
         self._audit = AuditTrail(uow_factory, clock, stale_after)
 
-    def import_file(self, path: Path, *, dry_run: bool = False) -> ImportReport:
-        warnings: list[str] = []
-        swept = self._audit.sweep_stuck_runs()
-        if swept:
-            warnings.append(f"{swept} interrupted import run(s) were marked as failed.")
+    def find_user(self, email_key: str) -> UserId | None:
+        """The id of the user with this normalised email, for the CLI's `--user` option."""
+        with self._uow_factory.create() as uow:
+            record = uow.users.find_by_email_key(email_key)
+        return None if record is None else record.user_id
+
+    def import_file(self, path: Path, *, user_id: UserId, dry_run: bool = False) -> ImportReport:
+        warnings = self._sweep()
         digest = hash_file(path)
         attempt = _Attempt(self._audit.start(path, digest), dry_run, warnings)
+        return self._guarded(
+            attempt,
+            lambda: self._execute(
+                lambda: self._reader.open(path), attempt, self._cli_identity(user_id)
+            ),
+        )
+
+    def import_upload(self, data: bytes, *, dry_run: bool, identity: IdentityStep) -> UploadImport:
+        """The REST path: a workbook in memory and the caller's own identity step. A parse
+        failure after the issuer was detected is a FAILED report, not an error."""
+        warnings = self._sweep()
+        digest = hash_bytes(data)
+        started = self._audit.start_upload(digest)
+        attempt = _Attempt(started.run_id, dry_run, warnings)
         try:
-            return self._execute(path, attempt)
+            report = self._guarded(
+                attempt, lambda: self._execute(lambda: self._open_upload(data), attempt, identity)
+            )
+        except ParseError as error:
+            if attempt.issuer is None:
+                raise
+            report = self._parse_failure(attempt, error)
+        return UploadImport(report, started.public_id, digest, started.started_at)
+
+    def _sweep(self) -> list[str]:
+        swept = self._audit.sweep_stuck_runs()
+        return [f"{swept} interrupted import run(s) were marked as failed."] if swept else []
+
+    def _guarded(self, attempt: _Attempt, execute: Callable[[], ImportReport]) -> ImportReport:
+        try:
+            return execute()
         except BaseException as error:
             if not attempt.finish_attempted:
                 self._record_failure(attempt, error)
             raise
 
-    def _execute(self, path: Path, attempt: _Attempt) -> ImportReport:
-        workbook = self._reader.open(path)
+    def _cli_identity(self, user_id: UserId) -> IdentityStep:
+        def resolve(context: StatementContext, uow: UnitOfWork) -> ResolvedCards:
+            self._gate.guard_claims(context, uow, user_id)
+            return self._gate.resolve(context, uow, user_id)
+
+        return resolve
+
+    def _open_upload(self, data: bytes) -> WorkbookView:
+        try:
+            return self._reader.open_bytes(data)
+        except ParseError:
+            raise UnreadableWorkbookError(_UNREADABLE) from None
+
+    def _execute(
+        self, opener: Callable[[], WorkbookView], attempt: _Attempt, identity: IdentityStep
+    ) -> ImportReport:
+        workbook = opener()
         parser = self._selector.select(workbook)
+        attempt.issuer = parser.issuer_code
         context = parser.read_context(workbook)
-        attempt.issuer = context.issuer_code
         attempt.identifiers = statement_identifiers(context)
         with self._uow_factory.create() as uow:
             try:
-                cards = self._gate.resolve(context, uow)
+                cards = identity(context, uow)
             except IdentityUnresolvedError as unresolved:
                 uow.rollback()
                 return self._needs_input(attempt, context, unresolved.keys)
@@ -202,6 +271,26 @@ class StatementImportService:
             counts.needing_review,
             issues=issues,
             warnings=(*attempt.warnings, *notes.warnings),
+            dry_run=attempt.dry_run,
+            rows_pending_currency=sum(1 for tx in selected if is_user_visible_unknown_currency(tx)),
+        )
+
+    def _parse_failure(self, attempt: _Attempt, error: ParseError) -> ImportReport:
+        """The audit record was already finalized as FAILED when the error was caught."""
+        text = f"{_UNPARSEABLE} {error}"
+        return ImportReport(
+            attempt.run_id,
+            ImportStatus.FAILED,
+            attempt.issuer,
+            0,
+            0,
+            0,
+            0,
+            0,
+            warnings=(
+                *attempt.warnings,
+                _UNPARSEABLE if contains_identifier(text, attempt.identifiers) else text,
+            ),
             dry_run=attempt.dry_run,
         )
 

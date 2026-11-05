@@ -1,5 +1,6 @@
 """openpyxl adapter: reads a whole workbook eagerly into plain immutable views."""
 
+import io
 import warnings
 import zipfile
 import zlib
@@ -17,13 +18,19 @@ from bank_transactions.domain.workbook import CellValue, Row, SheetView, Workboo
 from bank_transactions.ports.workbook_reader import WorkbookReader
 
 _PLAIN_CELL_TYPES = (str, int, float, Decimal, bool, datetime, date)
-# What openpyxl raises for damaged input: a bad or truncated archive, a missing package part
-# (KeyError), malformed XML, unparsable cell content (ValueError), a mistyped style attribute
-# (TypeError), a package without a workbook part (OSError) or a rejected file type.
+_ENCRYPTED_FLAG = 0x1
+# What openpyxl raises for damaged input: a bad or truncated archive (BadZipFile, zlib.error,
+# EOFError), an unsupported compression method (NotImplementedError, as zipfile reports it), a
+# missing package part (KeyError), malformed XML, unparsable cell content (ValueError), a
+# mistyped style attribute (TypeError), a package without a workbook part (OSError) or a
+# rejected file type. A part with the encryption flag set makes zipfile raise a RuntimeError;
+# `_load` tells that apart from a defect, which must propagate.
 # Anything else is a defect or a resource failure and must propagate.
 _BAD_INPUT_ERRORS = (
     zipfile.BadZipFile,
     zlib.error,
+    EOFError,
+    NotImplementedError,
     ElementTree.ParseError,
     InvalidFileException,
     KeyError,
@@ -42,6 +49,9 @@ class ExcelWorkbookReader(WorkbookReader):
                 return self.read_stream(stream)
         except OSError:
             raise ParseError("the workbook file could not be opened") from None
+
+    def open_bytes(self, data: bytes) -> WorkbookView:
+        return self.read_stream(io.BytesIO(data))
 
     def read_stream(self, stream: BinaryIO) -> WorkbookView:
         book = self._load(stream)
@@ -63,6 +73,11 @@ class ExcelWorkbookReader(WorkbookReader):
                 return openpyxl.load_workbook(stream, data_only=True)
         except _BAD_INPUT_ERRORS:
             raise ParseError("the file is not a readable Excel workbook") from None
+        except RuntimeError:
+            # zipfile reports an encrypted part as a RuntimeError; any other one is a defect.
+            if _has_encrypted_part(stream):
+                raise ParseError("the file is not a readable Excel workbook") from None
+            raise
 
     @staticmethod
     def _sheet_view(sheet: Any) -> SheetView:
@@ -72,6 +87,14 @@ class ExcelWorkbookReader(WorkbookReader):
         while rows and _is_blank_row(rows[-1]):
             rows.pop()
         return SheetView(sheet.title, tuple(rows))
+
+
+def _has_encrypted_part(stream: BinaryIO) -> bool:
+    try:
+        stream.seek(0)
+        return any(info.flag_bits & _ENCRYPTED_FLAG for info in zipfile.ZipFile(stream).infolist())
+    except (zipfile.BadZipFile, OSError):
+        return False
 
 
 def _plain_value(value: object) -> CellValue:

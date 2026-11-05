@@ -516,6 +516,25 @@ def test_group_counts_are_null_safe_on_original_amount_currency_and_installment(
     }
 
 
+def test_group_counts_use_the_source_currency_so_a_validated_row_still_matches_a_reimport(
+    factory, card_and_run, new_aggregate, sql
+):
+    card_id, run_id = card_and_run
+    unknown = {"original_amount": Decimal("10.00"), "original_currency": None}
+    with factory.create() as uow:
+        uow.transactions.insert_many([new_aggregate(card_id, run_id, **unknown)])
+        uow.commit()
+    sql("update transactions set original_currency = 'EUR'")  # the user validated the currency
+
+    as_in_the_file = comparison_key(card_id, original_amount=Decimal("10"))
+    as_validated = comparison_key(card_id, original_amount=Decimal("10"), original_currency=EUR)
+    with factory.create() as uow:
+        counts = uow.transactions.count_matching_groups([as_in_the_file, as_validated])
+
+    assert (counts[as_in_the_file], counts[as_validated]) == (1, 0)
+    assert sql("select source_original_currency from transactions")[0][0] is None
+
+
 def test_group_counts_separate_cards_dates_and_merchants(
     factory, seed_card, start_run, new_aggregate
 ):

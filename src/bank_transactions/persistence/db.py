@@ -12,9 +12,28 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.pool import NullPool
 
-from bank_transactions.domain.errors import PersistenceError
+from bank_transactions.domain.errors import (
+    BankTransactionsError,
+    ConflictError,
+    DataAlreadyOwnedError,
+    ImportInProgressError,
+    PersistenceError,
+)
 
 _SIMPLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+
+# Unique violations that mean a domain conflict, by constraint name.
+_UNIQUE_CONFLICTS: dict[str, Callable[[], ConflictError]] = {
+    "uq_claims_issuer_last4": lambda: DataAlreadyOwnedError(
+        "this card is already linked to another account"
+    ),
+    "ux_import_runs_running_sha": lambda: ImportInProgressError(
+        "the same file is already being imported"
+    ),
+    "uq_custom_categories_user_key": lambda: ConflictError(
+        ConflictError.CATEGORY_EXISTS, "a category with this name already exists"
+    ),
+}
 
 _SQLSTATE_MESSAGES = {
     "23505": "a stored record already has the same unique values",
@@ -57,17 +76,28 @@ def describe_database_error(error: SQLAlchemyError) -> str:
     return message
 
 
+def _translate(error: SQLAlchemyError) -> BankTransactionsError:
+    original = error.orig if isinstance(error, DBAPIError) else None
+    if getattr(original, "sqlstate", None) == "23505":
+        constraint = getattr(getattr(original, "diag", None), "constraint_name", None)
+        conflict = _UNIQUE_CONFLICTS.get(constraint or "")
+        if conflict is not None:
+            return conflict()
+    return PersistenceError(describe_database_error(error))
+
+
 def translates_database_errors[**P, T](operation: Callable[P, T]) -> Callable[P, T]:
-    """Turn database failures into a neutral PersistenceError. It is raised outside the except
-    block so neither __cause__ nor __context__ keeps the driver exception (and its row values)."""
+    """Turn database failures into a neutral PersistenceError, or the domain conflict a known
+    unique constraint stands for. It is raised outside the except block so neither __cause__
+    nor __context__ keeps the driver exception (and its row values)."""
 
     @functools.wraps(operation)
     def translated(*args: P.args, **kwargs: P.kwargs) -> T:
         try:
             return operation(*args, **kwargs)
         except SQLAlchemyError as error:
-            message = describe_database_error(error)
-        raise PersistenceError(message) from None
+            failure = _translate(error)
+        raise failure from None
 
     return translated
 

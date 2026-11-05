@@ -42,6 +42,32 @@ class IdentifierType(StrEnum):
     ACCOUNT_NUMBER = "account-number"
 
 
+class CategorySource(StrEnum):
+    """Which rule produced a transaction's effective category, strongest first."""
+
+    OVERRIDE = "OVERRIDE"
+    RULE = "RULE"
+    MAPPING = "MAPPING"
+    BANK = "BANK"
+
+
+class TripMembership(StrEnum):
+    TAGGED = "TAGGED"
+    AUTO = "AUTO"
+
+
+class ValidationStatus(StrEnum):
+    PENDING = "PENDING"
+    VALIDATED = "VALIDATED"
+
+
+class LoginKeyKind(StrEnum):
+    """What a login-throttle key digest was derived from."""
+
+    EMAIL = "EMAIL"
+    IP = "IP"
+
+
 class IssueSeverity(StrEnum):
     INFO = "INFO"
     WARNING = "WARNING"

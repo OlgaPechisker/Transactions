@@ -8,8 +8,12 @@ All lookups use ciphertext; plaintext identifiers exist only in memory. Nothing 
 from dataclasses import dataclass
 
 from bank_transactions.domain.enums import IdentifierType
-from bank_transactions.domain.errors import IdentityUnresolvedError, InvalidIdentitySelectionError
-from bank_transactions.domain.ids import AccountId, CardId, IdentifierToken, OwnerId
+from bank_transactions.domain.errors import (
+    DataAlreadyOwnedError,
+    IdentityUnresolvedError,
+    InvalidIdentitySelectionError,
+)
+from bank_transactions.domain.ids import AccountId, CardId, IdentifierToken, OwnerId, UserId
 from bank_transactions.domain.keys import OwnerMatchKey
 from bank_transactions.domain.models import CardHintKey, CardIdentityHint, StatementContext
 from bank_transactions.domain.text import contains_identifier
@@ -86,9 +90,10 @@ class _Evidence:
 class _Lookup:
     """Reads stored identity data for one source card."""
 
-    def __init__(self, protector: IdentifierProtector, uow: UnitOfWork) -> None:
+    def __init__(self, protector: IdentifierProtector, uow: UnitOfWork, user_id: UserId) -> None:
         self._protector = protector
         self._uow = uow
+        self._user_id = user_id
 
     def evidence(self, hint: CardIdentityHint) -> _Evidence:
         key = hint.card.key
@@ -100,7 +105,7 @@ class _Lookup:
         )
         owner = self._owner(hint)
         accounts = self._accounts(hint, number_enc)
-        lookup = CardLookup(key.issuer_code, last4_enc)
+        lookup = CardLookup(key.issuer_code, last4_enc, user_id=self._user_id)
         candidates = self._uow.cards.find_candidates(lookup)
         return _Evidence(hint, last4_enc, number_enc, owner, accounts, candidates)
 
@@ -110,7 +115,11 @@ class _Lookup:
             return usable[0] if len(usable) == 1 else None
         if evidence.owner is None:
             return None
-        owned = [a for a in self._uow.accounts.list_all() if a.owner_id == evidence.owner.owner_id]
+        owned = [
+            a
+            for a in self._uow.accounts.list_all(self._user_id)
+            if a.owner_id == evidence.owner.owner_id
+        ]
         return owned[0] if len(owned) == 1 else None
 
     def determined_owner(
@@ -118,13 +127,13 @@ class _Lookup:
     ) -> OwnerRecord | None:
         if evidence.owner_named:
             return evidence.owner
-        return self._uow.owners.get(account.owner_id) if account else None
+        return self._uow.owners.get(account.owner_id, self._user_id) if account else None
 
     def _owner(self, hint: CardIdentityHint) -> OwnerRecord | None:
         if hint.owner is None:
             return None
         return self._uow.owners.find_by_match_key(
-            OwnerMatchKey.from_display_name(hint.owner.display_name)
+            OwnerMatchKey.from_display_name(hint.owner.display_name), self._user_id
         )
 
     def _accounts(
@@ -132,7 +141,7 @@ class _Lookup:
     ) -> tuple[AccountRecord, ...]:
         if number_enc is None or hint.account is None:
             return ()
-        return self._uow.accounts.find_by_number(hint.account.bank_code, number_enc)
+        return self._uow.accounts.find_by_number(hint.account.bank_code, number_enc, self._user_id)
 
     def question(
         self,
@@ -146,9 +155,12 @@ class _Lookup:
             evidence.hint,
             issue,
             owners=tuple(
-                OwnerChoice(o.owner_id, o.display_name) for o in self._uow.owners.list_all()
+                OwnerChoice(o.owner_id, o.display_name)
+                for o in self._uow.owners.list_all(self._user_id)
             ),
-            accounts=tuple(self._account_choice(a) for a in self._uow.accounts.list_all()),
+            accounts=tuple(
+                self._account_choice(a) for a in self._uow.accounts.list_all(self._user_id)
+            ),
             candidates=tuple(self._candidate(c) for c in candidates),
             determined_owner=OwnerChoice(owner.owner_id, owner.display_name) if owner else None,
             determined_account=self._account_choice(account) if account else None,
@@ -181,10 +193,14 @@ class _Applier:
         uow: UnitOfWork,
         protector: IdentifierProtector,
         secrets: tuple[str, ...],
+        user_id: UserId,
+        placeholder_owners: bool,
     ) -> None:
         self._uow = uow
         self._protector = protector
         self._secrets = secrets
+        self._user_id = user_id
+        self._placeholder_owners = placeholder_owners
 
     def apply(
         self,
@@ -210,16 +226,19 @@ class _Applier:
         self._reject_identifiers(selection.display_name)
         owner = self._owner(selection, question)
         account = self._account(selection, evidence, question, owner)
+        issuer = evidence.hint.card.key.issuer_code
+        claim = self._uow.claims.create_or_get(self._user_id, issuer, evidence.last4_enc)
         card = NewCard(
-            owner.owner_id,
+            owner,
             account.account_id,
-            evidence.hint.card.key.issuer_code,
+            issuer,
             evidence.last4_enc,
             selection.display_name,
+            claim.claim_id,
         )
         return self._uow.cards.create(card).card_id
 
-    def _owner(self, selection: CreateCard, question: IdentityQuestion) -> OwnerRecord:
+    def _owner(self, selection: CreateCard, question: IdentityQuestion) -> OwnerId:
         determined = question.determined_owner
         chosen = selection.owner
         if determined is not None:
@@ -227,30 +246,40 @@ class _Applier:
                 raise _invalid("the owner is already determined for this card")
             return self._existing_owner(determined.owner_id)
         if chosen is None:
+            if self._placeholder_owners:
+                return self._placeholder_owner()
             raise _invalid("an owner is required for a new card")
         if isinstance(chosen, UseOwner):
             return self._existing_owner(chosen.owner_id)
         return self._created_owner(chosen)
 
-    def _existing_owner(self, owner_id: OwnerId) -> OwnerRecord:
-        record = self._uow.owners.get(owner_id)
+    def _existing_owner(self, owner_id: OwnerId) -> OwnerId:
+        record = self._uow.owners.get(owner_id, self._user_id)
         if record is None:
             raise _invalid("the selected owner does not exist")
-        return record
+        return record.owner_id
 
-    def _created_owner(self, chosen: CreateOwner) -> OwnerRecord:
+    def _created_owner(self, chosen: CreateOwner) -> OwnerId:
         self._reject_identifiers(chosen.display_name)
         key = OwnerMatchKey.from_display_name(chosen.display_name)
-        return self._uow.owners.find_by_match_key(key) or self._uow.owners.create(
-            NewOwner(chosen.display_name, key)
-        )
+        return (
+            self._uow.owners.find_by_match_key(key, self._user_id)
+            or self._uow.owners.create(NewOwner(chosen.display_name, key, self._user_id))
+        ).owner_id
+
+    def _placeholder_owner(self) -> OwnerId:
+        """The user's one nameless owner, shared by every card created without evidence."""
+        owners = self._uow.owners
+        return (
+            owners.find_placeholder(self._user_id) or owners.create_placeholder(self._user_id)
+        ).owner_id
 
     def _account(
         self,
         selection: CreateCard,
         evidence: _Evidence,
         question: IdentityQuestion,
-        owner: OwnerRecord,
+        owner: OwnerId,
     ) -> AccountRecord:
         determined = question.determined_account
         chosen = selection.account
@@ -265,12 +294,12 @@ class _Applier:
         return self._created_account(chosen, evidence, owner)
 
     def _existing_account(
-        self, account_id: AccountId, owner: OwnerRecord, evidence: _Evidence
+        self, account_id: AccountId, owner: OwnerId, evidence: _Evidence
     ) -> AccountRecord:
-        record = self._uow.accounts.get(account_id)
+        record = self._uow.accounts.get(account_id, self._user_id)
         if record is None:
             raise _invalid("the selected account does not exist")
-        if record.owner_id != owner.owner_id:
+        if record.owner_id != owner:
             raise _invalid("the selected account belongs to another owner")
         stated = evidence.number_enc
         if stated is not None and record.account_number_enc not in (None, stated):
@@ -278,26 +307,26 @@ class _Applier:
         return record
 
     def _created_account(
-        self, chosen: CreateAccount, evidence: _Evidence, owner: OwnerRecord
+        self, chosen: CreateAccount, evidence: _Evidence, owner: OwnerId
     ) -> AccountRecord:
         self._reject_identifiers(chosen.display_name)
         hint = evidence.hint.account
         bank_code = hint.bank_code if hint else None
         number = evidence.number_enc
         if number is not None:
-            same_number = self._uow.accounts.find_by_number(bank_code, number)
+            same_number = self._uow.accounts.find_by_number(bank_code, number, self._user_id)
             return self._reuse_or_create(same_number, owner, bank_code, number, chosen)
         return self._create_account(owner, bank_code, None, chosen)
 
     def _reuse_or_create(
         self,
         same_number: tuple[AccountRecord, ...],
-        owner: OwnerRecord,
+        owner: OwnerId,
         bank_code: str | None,
         number: IdentifierToken,
         chosen: CreateAccount,
     ) -> AccountRecord:
-        owned = [a for a in same_number if a.owner_id == owner.owner_id]
+        owned = [a for a in same_number if a.owner_id == owner]
         if len(owned) == 1 and len(same_number) == 1:
             return owned[0]
         if same_number:
@@ -306,14 +335,17 @@ class _Applier:
 
     def _create_account(
         self,
-        owner: OwnerRecord,
+        owner: OwnerId,
         bank_code: str | None,
         number: IdentifierToken | None,
         chosen: CreateAccount,
     ) -> AccountRecord:
-        return self._uow.accounts.create(
-            NewAccount(owner.owner_id, bank_code, number, chosen.display_name)
-        )
+        if bank_code is None and number is None:
+            # An owner has at most one account without a bank or number.
+            existing = self._uow.accounts.find_placeholder(owner)
+            if existing is not None:
+                return existing
+        return self._uow.accounts.create(NewAccount(owner, bank_code, number, chosen.display_name))
 
     def _reject_identifiers(self, label: str | None) -> None:
         if label and contains_identifier(label, self._secrets):
@@ -322,15 +354,43 @@ class _Applier:
 
 class IdentityGate:
     """Resolves all cards of one statement; raises IdentityUnresolvedError listing every card
-    that still needs input after the others were bound."""
+    that still needs input after the others were bound.
 
-    def __init__(self, protector: IdentifierProtector, resolver: IdentityResolver) -> None:
+    `placeholder_owners` (the API) lets a new card with no owner evidence hang from the user's
+    nameless placeholder owner; the CLI keeps requiring an explicit owner."""
+
+    def __init__(
+        self,
+        protector: IdentifierProtector,
+        resolver: IdentityResolver,
+        *,
+        placeholder_owners: bool = False,
+    ) -> None:
         self._protector = protector
         self._resolver = resolver
+        self._placeholder_owners = placeholder_owners
 
-    def resolve(self, context: StatementContext, uow: UnitOfWork) -> ResolvedCards:
-        lookup = _Lookup(self._protector, uow)
-        applier = _Applier(uow, self._protector, statement_identifiers(context))
+    def guard_claims(self, context: StatementContext, uow: UnitOfWork, user_id: UserId) -> None:
+        """Locks the user's existing claims on the file's card keys, in a fixed order so two
+        overlapping files serialise without deadlocking. A key another user claimed raises
+        DataAlreadyOwnedError, before any question is asked."""
+        keys = {
+            (
+                card.key.issuer_code,
+                self._protector.encrypt(IdentifierType.CARD_LAST4, card.key.last4),
+            )
+            for card in context.cards
+        }
+        for issuer, last4_enc in sorted(keys, key=lambda key: (key[0].value, bytes(key[1]))):
+            claim = uow.claims.lock(issuer, last4_enc)
+            if claim is not None and claim.user_id != user_id:
+                raise DataAlreadyOwnedError("this card is already linked to another account")
+
+    def resolve(self, context: StatementContext, uow: UnitOfWork, user_id: UserId) -> ResolvedCards:
+        lookup = _Lookup(self._protector, uow, user_id)
+        applier = _Applier(
+            uow, self._protector, statement_identifiers(context), user_id, self._placeholder_owners
+        )
         hints = context.identity_hints()
         resolved: dict[CardHintKey, CardId] = {}
         unresolved: list[CardHintKey] = []
